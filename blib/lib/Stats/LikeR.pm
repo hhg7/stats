@@ -1121,6 +1121,21 @@ sub _usage_text {
 	return defined $screen ? $screen : '';
 }
 
+# _sheet_name_clash(@names) -- the first two of a workbook's worksheet names
+# that are the same with case ignored, or nothing.  Excel cannot open a
+# workbook holding both; write_table's XS (wt_sheet_names_distinct()) calls this
+# because lc() folds every character of a UTF-8 string, which C cannot do
+# portably.  lc() is what Excel::Writer::XLSX 1.15 compares with too.
+sub _sheet_name_clash {
+	my %seen;
+	for my $name (@_) {
+		my $k = lc $name;
+		return ($seen{$k}, $name) if exists $seen{$k};
+		$seen{$k} = $name;
+	}
+	return;
+}
+
 # _usage_error($fn, $msg) -- die over an argument $fn was called with as
 # argparse does: the help screen, then "$fn: error: $msg" as the last line.
 # For the form of a call only (a missing or mistyped argument, an unknown
@@ -19348,13 +19363,50 @@ C<< written by E<lt>cwdE<gt>/E<lt>scriptE<gt> >> provenance line the LaTeX write
 the workbook's document B<comments> property (C<dc:description> in
 C<docProps/core.xml>); a C<xlsx_comment> string (or array ref of strings) is
 appended after it. C<xlsx_sheet> sets the worksheet name (default C<Sheet1>). As
-in openpyxl, a name that is empty or holds any of C<\ * ? : / [ ]> is an error, and
-one longer than 31 characters draws a warning, since Excel cannot read it:
+in C<Excel::Writer::XLSX> and XlsxWriter, a name that is empty, holds any of
+C<\ * ? : / [ ]>, or starts or ends with an apostrophe is an error. As in
+openpyxl, a name longer than 31 characters draws a warning, since Excel cannot
+read it:
 
  write_table(\@rows, 'report.xlsx',
      'xlsx_sheet'   => 'Results',
      'xlsx_comment' => 'batch 9',
  );
+
+B<Several worksheets.> A hash whose values are data frames is written as a
+workbook with one worksheet per key. Each key names its sheet, and the sheets
+come in sorted key order, as a HoH's rows do. This is the shape
+L<C<read_table>|/"read_table"> returns for a workbook of several sheets, so the two
+round-trip:
+
+ my %by_gene = (
+     AUR1 => [ { pdb => '1ABC', score => 0.9 }, { pdb => '2XYZ', score => 0.5 } ],
+     COX9 => { pdb => ['3DEF'], score => [0.7] },
+ );
+ write_table(\%by_gene, 'genes.xlsx');      # sheets AUR1 and COX9
+ my $book = read_table('genes.xlsx');       # { AUR1 => [...], COX9 => [...] }
+
+A sheet can be any shape but a flat hash: an AoH, an AoA, a HoA or a HoH. An
+empty C<[]> or C<{}> is a sheet with no rows. The other options (C<col_names>,
+C<row_names>, C<undef_val>, C<xlsx_comment>, C<xlsx_freeze_rows> and
+C<xlsx_freeze_cols>) apply to every sheet. A warning about one sheet names it
+(C<write_table: sheet 'AUR1': ...>), and so does an error.
+
+The hash counts as a workbook when any of its values is a data frame, that is,
+an array or hash whose first defined element is itself a reference. A column of
+a HoA, or a row of a HoH, holds plain values instead. Every other value must then
+be a data frame or empty. A plain value or a column beside a data frame is an
+error that names both keys. A hash whose values are all empty is still the
+empty HoA or HoH it always was.
+
+Only an C<.xlsx> file holds more than one table, so a workbook is an error for any
+other kind of file. C<xlsx_sheet> is an error too, since the keys name the sheets.
+Each key is checked as a sheet name, as above, before the file is opened. Two
+keys that are the same with case ignored (C<Sheet1> and C<sheet1>) are an error as
+well, because Excel cannot open such a workbook. Case is compared with perl's
+C<lc>, which is what C<Excel::Writer::XLSX> uses. The sheets are streamed one after
+another, so only the sheet being written is held in memory. Up to 65530 sheets
+fit in a ZIP archive without ZIP64.
 
 C<xlsx_freeze_rows> and C<xlsx_freeze_cols> freeze that many leading rows/columns in place (Excel's I<freeze panes>), so they stay visible while scrolling — most often used to pin the header row. They go up to 1048575 and 16383, one short of the sheet's limits:
 
@@ -19385,7 +19437,7 @@ C<read_table>.
   <td><code>data</code> (1st positional, or <code>data =&gt;</code>)</td>
   <td><i>required</i></td>
   <td>both</td>
-  <td>the table: flat hash, HoA, HoH, AoH, or AoA</td>
+  <td>the table: flat hash, HoA, HoH, AoH, or AoA; or, for <code>.xlsx</code>, a hash of such tables, written one worksheet per key (see <i>Several worksheets</i> above)</td>
 </tr>
 <tr>
   <td><code>file</code> (2nd positional, or <code>file =&gt;</code>)</td>
@@ -19475,7 +19527,7 @@ C<read_table>.
   <td><code>xlsx_sheet</code></td>
   <td><code>'Sheet1'</code></td>
   <td>Excel</td>
-  <td>worksheet name</td>
+  <td>worksheet name; an error for a workbook, whose keys name its sheets</td>
 </tr>
 <tr>
   <td><code>xlsx_comment</code></td>

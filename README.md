@@ -8466,13 +8466,52 @@ Mirroring `Excel::Writer::XLSX`'s
 the workbook's document **comments** property (`dc:description` in
 `docProps/core.xml`); a `xlsx_comment` string (or array ref of strings) is
 appended after it. `xlsx_sheet` sets the worksheet name (default `Sheet1`). As
-in openpyxl, a name that is empty or holds any of `\ * ? : / [ ]` is an error, and
-one longer than 31 characters draws a warning, since Excel cannot read it:
+in `Excel::Writer::XLSX` and XlsxWriter, a name that is empty, holds any of
+`\ * ? : / [ ]`, or starts or ends with an apostrophe is an error. As in
+openpyxl, a name longer than 31 characters draws a warning, since Excel cannot
+read it:
 
     write_table(\@rows, 'report.xlsx',
         'xlsx_sheet'   => 'Results',
         'xlsx_comment' => 'batch 9',
     );
+
+**Several worksheets.** A hash whose values are data frames is written as a
+workbook with one worksheet per key. Each key names its sheet, and the sheets
+come in sorted key order, as a HoH's rows do. This is the shape
+[`read_table`](#read_table) returns for a workbook of several sheets, so the two
+round-trip:
+
+    my %by_gene = (
+        AUR1 => [ { pdb => '1ABC', score => 0.9 }, { pdb => '2XYZ', score => 0.5 } ],
+        COX9 => { pdb => ['3DEF'], score => [0.7] },
+    );
+    write_table(\%by_gene, 'genes.xlsx');      # sheets AUR1 and COX9
+    my $book = read_table('genes.xlsx');       # { AUR1 => [...], COX9 => [...] }
+
+A sheet can be any shape but a flat hash: an AoH, an AoA, a HoA or a HoH. An
+empty `[]` or `{}` is a sheet with no rows. The other options (`col_names`,
+`row_names`, `undef_val`, `xlsx_comment`, `xlsx_freeze_rows` and
+`xlsx_freeze_cols`) apply to every sheet. A warning about one sheet names it
+(`write_table: sheet 'AUR1': ...`), and so does an error.
+
+The hash counts as a workbook when any of its values is a data frame, that is,
+an array or hash whose first defined element is itself a reference. A column of
+a HoA, or a row of a HoH, holds plain values instead. Every other value must then
+be a data frame or empty. A plain value or a column beside a data frame is an
+error that names both keys. A hash whose values are all empty is still the
+empty HoA or HoH it always was. A tied sheet is not looked into, so that none of
+its values is fetched twice. It can sit in a workbook beside other sheets, but
+a hash whose sheets are *all* tied is read as a HoA or HoH.
+
+Only an `.xlsx` file holds more than one table, so a workbook is an error for any
+other kind of file. `xlsx_sheet` is an error too, since the keys name the sheets.
+Each key is checked as a sheet name, as above, before the file is opened. Two
+keys that are the same with case ignored (`Sheet1` and `sheet1`) are an error as
+well, because Excel cannot open such a workbook. Case is compared with perl's
+`lc`, which is what `Excel::Writer::XLSX` uses. The sheets are streamed one after
+another, so only the sheet being written is held in memory. Up to 65530 sheets
+fit in a ZIP archive without ZIP64.
 
 `xlsx_freeze_rows` and `xlsx_freeze_cols` freeze that many leading rows/columns in place (Excel's *freeze panes*), so they stay visible while scrolling — most often used to pin the header row. They go up to 1048575 and 16383, one short of the sheet's limits:
 
@@ -8486,7 +8525,7 @@ raw values (no cell number formats), matching the round-trip behaviour of
 ### Options
 | option | default | applies to | meaning |
 |---|---|---|---|
-| `data` (1st positional, or `data =>`) | *required* | both | the table: flat hash, HoA, HoH, AoH, or AoA |
+| `data` (1st positional, or `data =>`) | *required* | both | the table: flat hash, HoA, HoH, AoH, or AoA; or, for `.xlsx`, a hash of such tables, written one worksheet per key (see *Several worksheets* above) |
 | `file` (2nd positional, or `file =>`) | *required* | both | output path; written as a delimited table, or as LaTeX when `tex` is on |
 | `sep` / `delim` | from extension (`,` for `.csv`, tab for `.tsv`), else `,` | delimited | field separator; the two are aliases. Not empty, and no NUL, quote, CR or LF |
 | `row_names` | `0` (off); `1` (on) for a HoH | both | true prepends a label column (numeric 1-based index, or the outer key for a HoH); `0` omits it. Off by default in **every** format — delimited, LaTeX and `.xlsx` alike — for every shape but a HoH. (R's `write.table` defaults it on and this once followed suit for LaTeX; it no longer does.) A HoH defaults it on, because its outer keys are the row identifiers and exist nowhere else. For a HoA/AoH a non-numeric *column name* uses that column's values as the labels and drops it from the body; a HoA without that column dies, and AoH rows without it are labelled `undef_val`, with a warning. For a HoH, an AoA or a flat hash a non-numeric string *names* the label column (the outer keys, or `1..n`), so `row_names => 'taxid'` heads it `taxid` instead of leaving the header cell empty; it dies if that name is also a column being written. A reference dies |
@@ -8501,7 +8540,7 @@ raw values (no cell number formats), matching the round-trip behaviour of
 | `tex_longtable` | `0` (off) | LaTeX | write only the table body (header + data rows + `\hline`, no `\begin{tabular}`/`\end{tabular}` or column spec) for `\input{}` into a caller-supplied `longtable`; implies `tex => 1`, and emits a `% \begin{longtable}{...}` hint with one `tex_col_align` char per column |
 | `tex_longtable_head` | `0` (off) | LaTeX | generate `longtable`'s repeat-header machinery (`\endfirsthead` / `\endhead` / `\endfoot`) from the table's own header, so the header frozen at every page break tracks `col_names` instead of being hand-written; a non-numeric value is the continuation caption. Implies `tex_longtable`. Put the first page's top rule on your own `\caption` line (`\\ \hline`) — a leading `\hline` in an `\input`ed file is a `Misplaced \noalign` error |
 | `xlsx` | auto: `1` when `file` ends in `.xlsx`, else `0` | Excel | write a real `.xlsx` workbook (dependency-free, built in XS) instead of a delimited table; `xlsx => 0` forces delimited even for a `.xlsx` name. Mutually exclusive with `tex` |
-| `xlsx_sheet` | `'Sheet1'` | Excel | worksheet name |
+| `xlsx_sheet` | `'Sheet1'` | Excel | worksheet name; an error for a workbook, whose keys name its sheets |
 | `xlsx_comment` | *(none)* | Excel | extra line(s) appended after the provenance in the workbook's document *comments* property (`dc:description`): a string (an object is stringified), or an array ref of strings |
 | `xlsx_freeze_rows` | `0` (none) | Excel | number of leading rows to freeze in place (freeze panes), e.g. `1` to pin the header row; at most 1048575 |
 | `xlsx_freeze_cols` | `0` (none) | Excel | number of leading columns to freeze in place (freeze panes); at most 16383 |

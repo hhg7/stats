@@ -2635,9 +2635,9 @@ static void ft_net_leaf(ft_net *restrict N) {
 				ft_node_push(N, nd, pv[k].p + ddf, pv[k].q + ddf + lw);
 			N->work += (NV)(ib - ia);
 		}
-		if (N->held > FT_NET_PAST_CAP) N->aborted = TRUE;
+		if (N->held > FT_NET_PAST_CAP) N->aborted = 1;
 	}
-	if (N->work > FT_NET_WORK_CAP) N->aborted = TRUE;
+	if (N->work > FT_NET_WORK_CAP) N->aborted = 1;
 }
 
 /*Place column es below node em, row by row from row i with rem still to
@@ -2704,7 +2704,7 @@ static NV fisher_rxc_pvalue(pTHX_ const long *restrict cells, unsigned nrow, uns
 	runs to log(N! / prod R_i!), which passes 709 by N = 1000.*/
 	N.K = -FT_LF(&N, tot);
 	for (size_t i = 0; i < N.r; i++) N.K += FT_LF(&N, N.R[i]);
-	N.p_total = 0.0; N.work = 0.0; N.held = 0; N.aborted = FALSE;
+	N.p_total = 0.0; N.work = 0.0; N.held = 0; N.aborted = 0;
 	Newx(N.rem_suffix, N.r + 1, long);
 	Newx(N.x, N.r, long);
 	Newx(N.d, N.r, long);
@@ -5835,7 +5835,7 @@ static void qn_format_vec(const double *restrict x, const bool *restrict ok,
 	for (size_t i = 0; i < n; i++) {
 		if (!ok[i]) continue;
 		int kpower = 0, nsig = 1;
-		bool widens = FALSE;
+		bool widens = 0;
 		if (x[i] != 0.0) {
 			char e[64];
 			snprintf(e, sizeof e, "%.*e", digits - 1, x[i]);	//d.dddddde+XX
@@ -5856,7 +5856,7 @@ static void qn_format_vec(const double *restrict x, const bool *restrict ok,
 		if (sleft > mxsl) mxsl = sleft;
 		if (nsig > mxns) mxns = nsig;
 	}
-	bool sci = FALSE;
+	bool sci = 0;
 	int d = 0;
 	if (mxns != INT_MIN) {
 		if (mxl < 0) mxsl = 1;
@@ -5866,7 +5866,7 @@ static void qn_format_vec(const double *restrict x, const bool *restrict ok,
 		const int dE = mxns - 1;
 		const int wE = (dE > 0) + dE + 4 + e;
 		if (wF <= wE) d = rgt;
-		else { sci = TRUE; d = dE; }
+		else { sci = 1; d = dE; }
 	}
 	for (size_t i = 0; i < n; i++) {
 		if (!ok[i]) { out[i][0] = '\0'; continue; }
@@ -6495,18 +6495,25 @@ so the table never exists as SVs, nor as one string of XML, nor as a copy of
 that string inside a second one holding the whole archive.  A 200000 x 20 AoH
 used to cost 1125 MB over the data's own peak for a 308 MB file, and costs 30 MB:
 iterating each row's hash to find the columns gives it an iterator, 24 MB in
-all, exactly what `keys %$_` on every row costs in perl itself.*/
+all, exactly what `keys %$_` on every row costs in perl itself.
+
+A workbook of several worksheets writes them one after another, each streamed
+the same way, so only the one being written is ever in memory.*/
 typedef struct {
 	PerlIO *fh;
 	const char *file;
+	SV *who; // how a croak names the worksheet: "write_table", or "write_table: sheet 'A'" in a workbook
 	SV *buf; // worksheet XML not yet handed to the file: all of it when !seekable
 	SV *cell; // one cell's text, upgraded to UTF-8 when it arrives as Latin-1
 	SV *cdir; // the ZIP central directory, written last
-	uint64_t sheet_len; // worksheet bytes handed to the file so far
+	uint64_t sheet_len; // this worksheet's bytes handed to the file so far
 	uint32_t crc; // their CRC-32
-	uint32_t off; // bytes written before the worksheet's local header
+	uint32_t off; // bytes written before this worksheet's local header
 	unsigned count; // ZIP members so far
 	size_t row; // the number the next <row> gets, from 1
+	size_t sheet; // the worksheet being written, from 1; 0 before the first
+	char part[48]; // its member name, xl/worksheets/sheetN.xml: 19 + 20 digits + 4 + NUL
+	STRLEN part_len;
 	bool seekable; // the local header is patched in place once the size is known
 } WtXlsx;
 
@@ -6519,6 +6526,7 @@ typedef struct {
 	bool *num;	// the field is a number the caller held as one, not as a string: see wt_cell()
 	SV **scr;
 	size_t n;	// fields filled so far in this record
+	SV *who; // how a croak names the table (WtFrame.who); NULL = plain "write_table"
 } WtRow;
 
 static void wt_xlsx_row(pTHX_ WtXlsx *restrict X, const WtRow *restrict R);
@@ -6650,6 +6658,7 @@ static void wt_row_init(pTHX_ WtRow *restrict R, size_t width) {
 	for (size_t i = 0; i < width; i++) av_push(scr_av, newSV(0));
 	R->scr = AvARRAY(scr_av);	// stable: nothing is pushed after this
 	R->n = 0;
+	R->who = NULL;
 }
 
 /*A field that is already text: a row label, or undef_val.*/
@@ -6682,7 +6691,10 @@ for the string it was printed as.*/
 static void wt_cell(pTHX_ WtRow *restrict R, SV *cell, const char *undef_val, STRLEN undef_len) {
 	if (cell) SvGETMAGIC(cell);	// no restrict on cell: it is the caller's, or a proxy perl made
 	if (!cell || !SvOK(cell)) { wt_field(R, undef_val, undef_len); return; }
-	if (SvROK(cell)) croak("write_table: Cannot write nested reference types to table\n");
+	if (SvROK(cell)) {
+		if (R->who) croak("%" SVf ": Cannot write nested reference types to table\n", SVfARG(R->who));
+		croak("write_table: Cannot write nested reference types to table\n");
+	}
 	const size_t i = R->n++;
 	if (SvPOK(cell)) {
 		R->num[i] = 0;
@@ -6814,7 +6826,7 @@ static void wt_headers_given(pTHX_ AV *headers_av, SV *col_names_sv, bool positi
 	}
 }
 
-/*Does col_names name at least one column?  Only an undef element does not.*/
+//Does col_names name at least one column?  Only an undef element does not
 static bool wt_col_names_any(pTHX_ SV *col_names_sv) {
 	AV *c_av = (AV*)SvRV(col_names_sv);
 	for (SSize_t i = 0; i <= av_len(c_av); i++) {
@@ -7689,8 +7701,11 @@ static void wt_xlsx_member(pTHX_ WtXlsx *restrict X, const char *name, SV *conte
 	X->count++;
 }
 
-static const char WT_XLSX_SHEET[] = "xl/worksheets/sheet1.xml";
-#define WT_XLSX_SHEET_LEN (sizeof(WT_XLSX_SHEET) - 1)
+/*The most worksheets a workbook is written with.  A ZIP without ZIP64 counts
+its members in 16 bits, 65535 at most, and the five members other than the
+worksheets (wt_xlsx_begin()) take five of them.  Excel itself sets no number,
+only the memory to hold them.*/
+#define XLSX_MAX_SHEETS ((size_t)65530)
 
 /*Worksheet XML gathered before it is written, so that one write carries
 hundreds of rows.  On the 200000 x 20 AoH, 8 KB, 64 KB and 1 MB all wrote the
@@ -7703,8 +7718,8 @@ table, and it is all the worksheet XML ever held in memory.*/
 worksheet would wrap them into an archive no reader can open.  Refused instead:
 end is where the archive would finish with everything held so far written.*/
 static void wt_xlsx_room(pTHX_ const WtXlsx *restrict X) {
-	const uint64_t end = (uint64_t)X->off + ZIP_LOCAL_FIXED + WT_XLSX_SHEET_LEN + X->sheet_len
-		+ SvCUR(X->buf) + SvCUR(X->cdir) + ZIP_CENTRAL_FIXED + WT_XLSX_SHEET_LEN + ZIP_EOCD_LEN;
+	const uint64_t end = (uint64_t)X->off + ZIP_LOCAL_FIXED + X->part_len + X->sheet_len
+		+ SvCUR(X->buf) + SvCUR(X->cdir) + ZIP_CENTRAL_FIXED + X->part_len + ZIP_EOCD_LEN;
 	if (end > (uint64_t)0xFFFFFFFFu)
 		croak("write_table: '%s' would be larger than the 4 GB a ZIP archive can hold "
 			"without ZIP64, which write_table does not write\n", X->file);
@@ -7721,20 +7736,13 @@ static void wt_xlsx_flush(pTHX_ WtXlsx *restrict X) {
 	SvCUR_set(X->buf, 0);
 }
 
-/*Open 'file' and write everything of the workbook but the worksheet's rows:
-the five small members, then the worksheet's local header and the XML ahead of
-its first row.  *slot gets the handle, so that a croak before wt_xlsx_finish()
-closes it.
-
-The worksheet goes last and its size is not known until the table ends, but a
-STORED member's local header, which comes first, has to carry that size and
-the CRC.  On a file that can seek, which is nearly every file, the header is
-written with zeroes in them and patched in place at the end.  One that cannot,
-such as a pipe, gets the whole worksheet gathered in memory and written behind
-a finished header, which is what every workbook used to cost.  Either way the
-bytes are the ones a single pass over the finished worksheet writes.*/
+/*Open 'file' and write everything of the workbook ahead of its worksheets: the
+five small members, which name every worksheet, so names holds them all (as
+UTF-8 SVs, in the order they are written).  *slot gets the handle, so that a
+croak before wt_xlsx_finish() closes it.  The worksheets follow, each between
+wt_xlsx_sheet_begin() and wt_xlsx_sheet_end().*/
 static void wt_xlsx_begin(pTHX_ WtXlsx *restrict X, PerlIO **slot, const char *file,
-	SV *sheet_name, SV *comment, size_t freeze_rows, size_t freeze_cols){
+	AV *names, SV *comment){
 	// document properties: provenance goes in the "comments" field
 	SV *core = sv_2mortal(newSVpvs(
 		"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
@@ -7758,10 +7766,7 @@ static void wt_xlsx_begin(pTHX_ WtXlsx *restrict X, PerlIO **slot, const char *f
 		"<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">"
 		"<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>"
 		"<Default Extension=\"xml\" ContentType=\"application/xml\"/>"
-		"<Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/>"
-		"<Override PartName=\"/xl/worksheets/sheet1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>"
-		"<Override PartName=\"/docProps/core.xml\" ContentType=\"application/vnd.openxmlformats-package.core-properties+xml\"/>"
-		"</Types>"));
+		"<Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/>"));
 	SV *rels = sv_2mortal(newSVpvs(
 		"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
 		"<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
@@ -7770,19 +7775,37 @@ static void wt_xlsx_begin(pTHX_ WtXlsx *restrict X, PerlIO **slot, const char *f
 		"</Relationships>"));
 	SV *wbrels = sv_2mortal(newSVpvs(
 		"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
-		"<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
-		"<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet1.xml\"/>"
-		"</Relationships>"));
+		"<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"));
 	SV *workbook = sv_2mortal(newSVpvs(
 		"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
 		"<workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" "
 		"xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">"
-		"<sheets><sheet name=\""));
-	{
-		STRLEN snl; const char *sn = SvPVutf8(sheet_name, snl);
+		"<sheets>"));
+/* Worksheet k is the part xl/worksheets/sheetk.xml, related to the workbook as
+  rIdk, with sheetId k: the numbering every writer uses, Excel's own included. */
+	for (SSize_t i = 0; i <= av_len(names); i++) {
+		const UV k = (UV)i + 1;
+		SV_CATLIT(ctypes, "<Override PartName=\"/xl/worksheets/sheet");
+		xlsx_cat_uint(aTHX_ ctypes, k);
+		SV_CATLIT(ctypes, ".xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>");
+		SV_CATLIT(wbrels, "<Relationship Id=\"rId");
+		xlsx_cat_uint(aTHX_ wbrels, k);
+		SV_CATLIT(wbrels, "\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet");
+		xlsx_cat_uint(aTHX_ wbrels, k);
+		SV_CATLIT(wbrels, ".xml\"/>");
+		SV_CATLIT(workbook, "<sheet name=\"");
+		STRLEN snl; const char *sn = SvPVutf8(AvARRAY(names)[i], snl);
 		xlsx_xml_cat(aTHX_ workbook, sn, snl, FALSE);
+		SV_CATLIT(workbook, "\" sheetId=\"");
+		xlsx_cat_uint(aTHX_ workbook, k);
+		SV_CATLIT(workbook, "\" r:id=\"rId");
+		xlsx_cat_uint(aTHX_ workbook, k);
+		SV_CATLIT(workbook, "\"/>");
 	}
-	SV_CATLIT(workbook, "\" sheetId=\"1\" r:id=\"rId1\"/></sheets></workbook>");
+	SV_CATLIT(ctypes, "<Override PartName=\"/docProps/core.xml\" ContentType=\"application/vnd.openxmlformats-package.core-properties+xml\"/>"
+		"</Types>");
+	SV_CATLIT(wbrels, "</Relationships>");
+	SV_CATLIT(workbook, "</sheets></workbook>");
 
 	X->file = file;
 	X->cdir = sv_2mortal(newSVpvs(""));
@@ -7794,6 +7817,9 @@ static void wt_xlsx_begin(pTHX_ WtXlsx *restrict X, PerlIO **slot, const char *f
 	X->off = 0;
 	X->count = 0;
 	X->row = 1;
+	X->sheet = 0;
+	X->part[0] = '\0';
+	X->part_len = 0;
 	X->fh = PerlIO_open(file, "wb");
 	if (!X->fh) wt_open_failed(aTHX_ file);
 	*slot = X->fh;
@@ -7805,9 +7831,31 @@ static void wt_xlsx_begin(pTHX_ WtXlsx *restrict X, PerlIO **slot, const char *f
 	/* Seeking to where the handle already is moves nothing on a file, and fails
 	  on a pipe without setting the handle's error flag. */
 	X->seekable = PerlIO_seek(X->fh, (Off_t)X->off, SEEK_SET) == 0;
+}
+
+/*Start the next worksheet: its local header and the XML ahead of its first row.
+who is how a croak about it names it (WtXlsx.who).
+
+A worksheet's size is not known until its table ends, but a STORED member's
+local header, which comes first, has to carry that size and the CRC.  On a
+file that can seek, which is nearly every file, the header is written with
+zeroes in them and patched in place by wt_xlsx_sheet_end().  One that cannot,
+such as a pipe, gets the whole worksheet gathered in memory and written behind
+a finished header, which is what every workbook used to cost.  Either way the
+bytes are the ones a single pass over the finished worksheet writes.*/
+static void wt_xlsx_sheet_begin(pTHX_ WtXlsx *restrict X, SV *who,
+	size_t freeze_rows, size_t freeze_cols){
+	X->who = who;
+	X->sheet++;
+	const int pl = my_snprintf(X->part, sizeof(X->part), "xl/worksheets/sheet%" UVuf ".xml", (UV)X->sheet);
+	X->part_len = (STRLEN)pl;
+	X->sheet_len = 0;
+	X->crc = 0;
+	X->row = 1;
+	SvCUR_set(X->buf, 0);
 	if (X->seekable) {
 		SV *h = sv_2mortal(newSVpvs(""));
-		zip_local_header(aTHX_ h, WT_XLSX_SHEET, WT_XLSX_SHEET_LEN, 0, 0);	// CRC and sizes patched at the end
+		zip_local_header(aTHX_ h, X->part, X->part_len, 0, 0);	// CRC and sizes patched at the end
 		PerlIO_write(X->fh, SvPVX(h), SvCUR(h));
 	}
 
@@ -7864,11 +7912,11 @@ too long are refused before the file is opened.*/
 static void wt_xlsx_row(pTHX_ WtXlsx *restrict X, const WtRow *restrict R) {
 	const size_t n = R->n;
 	if (n > XLSX_MAX_COLS)
-		croak("write_table: '%s' would have %" UVuf " columns, more than the %" UVuf
-			" an Excel worksheet holds\n", X->file, (UV)n, (UV)XLSX_MAX_COLS);
+		croak("%" SVf ": '%s' would have %" UVuf " columns, more than the %" UVuf
+			" an Excel worksheet holds\n", SVfARG(X->who), X->file, (UV)n, (UV)XLSX_MAX_COLS);
 	if (X->row > XLSX_MAX_ROWS)
-		croak("write_table: '%s' would have more than the %" UVuf " rows an Excel "
-			"worksheet holds, header included\n", X->file, (UV)XLSX_MAX_ROWS);
+		croak("%" SVf ": '%s' would have more than the %" UVuf " rows an Excel "
+			"worksheet holds, header included\n", SVfARG(X->who), X->file, (UV)XLSX_MAX_ROWS);
 	SV *b = X->buf;
 	SV_CATLIT(b, "<row r=\"");
 	xlsx_cat_uint(aTHX_ b, (UV)X->row);
@@ -7899,8 +7947,8 @@ static void wt_xlsx_row(pTHX_ WtXlsx *restrict X, const WtRow *restrict R) {
 /* Characters, as XlsxWriter counts them (len() of a str, against xls_strmax);
  a cell of no more bytes than the limit cannot have more characters. */
 		if (ul > XLSX_MAX_CHARS && utf8_length((const U8*)u, (const U8*)u + ul) > XLSX_MAX_CHARS)
-			croak("write_table: a cell in row %" UVuf " of '%s' has more than the %" UVuf
-				" characters an Excel cell holds\n", (UV)X->row, X->file, (UV)XLSX_MAX_CHARS);
+			croak("%" SVf ": a cell in row %" UVuf " of '%s' has more than the %" UVuf
+				" characters an Excel cell holds\n", SVfARG(X->who), (UV)X->row, X->file, (UV)XLSX_MAX_CHARS);
 		SV_CATLIT(b, "\" t=\"inlineStr\"><is><t xml:space=\"preserve\">");
 		xlsx_xml_cat(aTHX_ b, u, ul, TRUE);
 		SV_CATLIT(b, "</t></is></c>");
@@ -7910,14 +7958,13 @@ static void wt_xlsx_row(pTHX_ WtXlsx *restrict X, const WtRow *restrict R) {
 	if (X->seekable && SvCUR(b) >= WT_XLSX_CHUNK) wt_xlsx_flush(aTHX_ X);
 }
 
-/*Close the worksheet, finish the archive and close the file.  *slot is the
-save-stack slot wt_xlsx_begin() filled: it keeps the handle until the close
-here, so a croak on the way still closes it.*/
-static void wt_xlsx_finish(pTHX_ WtXlsx *restrict X, PerlIO **slot) {
+/*Close the worksheet wt_xlsx_sheet_begin() started: finish its XML, give its
+local header the size and CRC, and add its central-directory record.  *slot is
+the save-stack slot wt_xlsx_begin() filled; a seek that fails closes the file
+before the croak, so that $! is still the seek's reason after it.*/
+static void wt_xlsx_sheet_end(pTHX_ WtXlsx *restrict X, PerlIO **slot) {
 	SV_CATLIT(X->buf, "</sheetData></worksheet>");
 	const uint32_t hdr_at = X->off;	// the worksheet's local header
-	bool failed = 0;
-	int errnum = 0;	// errno when a seek failed
 	if (X->seekable) {
 		wt_xlsx_flush(aTHX_ X);
 		unsigned char p[12];
@@ -7925,11 +7972,19 @@ static void wt_xlsx_finish(pTHX_ WtXlsx *restrict X, PerlIO **slot) {
 		for (unsigned short i = 0; i < 3; i++)
 			for (unsigned short k = 0; k < 4; k++)
 				p[4 * i + k] = (unsigned char)((v[i] >> (8 * k)) & 0xFF);
-		const Off_t end = (Off_t)hdr_at + ZIP_LOCAL_FIXED + WT_XLSX_SHEET_LEN + (Off_t)X->sheet_len;
+		const Off_t end = (Off_t)hdr_at + ZIP_LOCAL_FIXED + (Off_t)X->part_len + (Off_t)X->sheet_len;
+		bool failed = 0;
+		int errnum = 0;	// errno when a seek failed
 		if (PerlIO_seek(X->fh, (Off_t)hdr_at + ZIP_LOCAL_CRC_AT, SEEK_SET) != 0) { failed = 1; errnum = errno; }
 		else {
 			PerlIO_write(X->fh, p, sizeof(p));
 			if (PerlIO_seek(X->fh, end, SEEK_SET) != 0) { failed = 1; errnum = errno; }
+		}
+		if (failed) {
+			PerlIO_close(X->fh);
+			X->fh = NULL;
+			*slot = NULL;
+			wt_write_failed(aTHX_ X->file, errnum);
 		}
 	} else {
 		wt_xlsx_room(aTHX_ X);
@@ -7937,14 +7992,22 @@ static void wt_xlsx_finish(pTHX_ WtXlsx *restrict X, PerlIO **slot) {
 		X->crc = xlsx_crc32(0, (const unsigned char*)SvPVX(X->buf), (size_t)n);
 		X->sheet_len = n;
 		SV *h = sv_2mortal(newSVpvs(""));
-		zip_local_header(aTHX_ h, WT_XLSX_SHEET, WT_XLSX_SHEET_LEN, X->crc, (uint32_t)n);
+		zip_local_header(aTHX_ h, X->part, X->part_len, X->crc, (uint32_t)n);
 		PerlIO_write(X->fh, SvPVX(h), SvCUR(h));
 		PerlIO_write(X->fh, SvPVX(X->buf), n);
+		SvCUR_set(X->buf, 0);
 	}
-	zip_central_entry(aTHX_ X->cdir, WT_XLSX_SHEET, WT_XLSX_SHEET_LEN, X->crc, (uint32_t)X->sheet_len, hdr_at);
+	zip_central_entry(aTHX_ X->cdir, X->part, X->part_len, X->crc, (uint32_t)X->sheet_len, hdr_at);
 	X->count++;
+	X->off = hdr_at + (uint32_t)(ZIP_LOCAL_FIXED + X->part_len) + (uint32_t)X->sheet_len;	// wt_xlsx_room() kept it below 4 GB
+}
+
+/*Finish the archive after its last worksheet and close the file.  *slot is
+the save-stack slot wt_xlsx_begin() filled: it keeps the handle until the close
+here, so a croak on the way still closes it.*/
+static void wt_xlsx_finish(pTHX_ WtXlsx *restrict X, PerlIO **slot) {
 	// central directory, then end-of-central-directory record
-	const uint32_t cd_off = hdr_at + (uint32_t)(ZIP_LOCAL_FIXED + WT_XLSX_SHEET_LEN) + (uint32_t)X->sheet_len;
+	const uint32_t cd_off = X->off;
 	const uint32_t cd_len = (uint32_t)SvCUR(X->cdir);
 	zip_le32(aTHX_ X->cdir, 0x06054b50);
 	zip_le16(aTHX_ X->cdir, 0);			//number of this disk
@@ -7958,11 +8021,794 @@ static void wt_xlsx_finish(pTHX_ WtXlsx *restrict X, PerlIO **slot) {
 	PerlIO *fh = X->fh;
 	X->fh = NULL;
 	*slot = NULL;	// closed below, whatever happens
-	if (failed) {
-		PerlIO_close(fh);
-		wt_write_failed(aTHX_ X->file, errnum);
-	}
 	wt_close_checked(aTHX_ fh, X->file);
+}
+
+
+/*What write_table() was asked for that every table it writes shares: the one
+table of a delimited, LaTeX or .xlsx file, or each worksheet of a workbook.*/
+typedef struct {
+	SV *col_names_sv; // NULL or undef = not given
+	SV *row_names_sv; // NULL = not given: on for a HoH, off for every other shape
+	const char *rn_name; // row_names as a name rather than a flag; NULL when it is a flag or absent
+	STRLEN rn_name_len;
+	const char *undef_val;
+	STRLEN undef_len;
+	const char *file;
+	bool xlsx;
+} WtOpts;
+
+/*One table write_table() writes: what wt_frame_shape() finds it to be, and what
+wt_frame_write() finds writing it, for wt_frame_warn() to report.*/
+typedef struct {
+	SV *data_ref; // the frame's HV or AV, untied
+	SV *who; // how messages name it: "write_table", or "write_table: sheet 'A'" in a workbook
+	AV *rows_av; // HoH: its row keys, mortal
+	bool is_hoh, is_hoa, is_aoh, is_flat_hash, is_aoa;
+	bool is_empty; // {} or []: no rows, so no shape either
+	bool rn_named; // HoH only: row_names is a name for the key column, not a flag
+	bool inc_rownames; // a label column is written
+	size_t n_unnamed; // data columns whose header cell is empty
+	size_t first_unnamed; // 1-based file column of the first of them; 0 = none
+	size_t n_long; // AoA data rows longer than the header
+	size_t first_long, first_long_width, header_width; // the first of them, its cells, the header's
+	size_t n_no_label; // AoH rows with no row_names column
+} WtFrame;
+
+/*Find the shape of F->data_ref and check it, before any file is opened, so
+that a refused call leaves an existing file intact.*/
+static void wt_frame_shape(pTHX_ WtFrame *restrict F, const WtOpts *restrict O) {
+	SV *data_ref = F->data_ref;
+	SV *who = F->who;
+	SV *col_names_sv = O->col_names_sv;
+	SV *row_names_sv = O->row_names_sv;
+	const char *rn_name = O->rn_name;
+	const char *file = O->file;
+	const bool xlsx = O->xlsx;
+	bool is_hoh = 0, is_hoa = 0, is_aoh = 0, is_flat_hash = 0, is_aoa = 0;
+/* {} or []: no rows, so no shape to find either.  It used to return before a
+  file was opened, writing nothing and saying nothing, so a script that went on
+  to read the file found it missing.  It is now a table with no rows: its header
+  is whatever col_names and row_names give, as pandas writes ",A\n" for
+  DataFrame({"A": []}).to_csv() (tests/io/formats/test_to_csv.py,
+  test_empty_dataframe), and a lone empty record for no columns at all. */
+	bool is_empty = 0;
+	bool rn_named = 0; // HoH only: row_names is a name for the key column, not a flag
+	AV *rows_av = NULL; // HoH: its row keys, mortal
+/* Validate Input Structures & Homogeneity.  A value is read through wt_got(),
+  which runs its get magic: hv_iterval() and av_fetch() hand back a proxy with no
+  value yet for a tied hash or array.  hv_iterinit()'s key count is not relied on
+  for the same reason -- a tied hash reports 0 there, whatever it holds. */
+	if (SvTYPE(data_ref) == SVt_PVHV) {
+		HV *hv = (HV*)data_ref;
+		ITER_KEEP_BEGIN(hv);
+		hv_iterinit(hv);
+		HE *entry = hv_iternext(hv);
+		if (!entry) {
+			is_empty = 1;
+			ITER_KEEP_END;	// one END on each branch: the else needs the entry
+		}
+		else {
+			SV *first_val = wt_got(aTHX_ hv_iterval(hv, entry));
+			ITER_KEEP_END;
+			if (!first_val) {
+				croak("%" SVf ": Invalid hash entry\n", SVfARG(who));
+			}
+// Check if top level values are scalars (Flat Hash)
+			if (!SvROK(first_val)) {
+				is_flat_hash = 1;
+			} else {
+				int first_type = SvTYPE(SvRV(first_val));
+				if (first_type != SVt_PVHV && first_type != SVt_PVAV) {
+					croak("%" SVf ": Data values must be either all HASHes, all ARRAYs, or all scalars\n", SVfARG(who));
+				}
+				is_hoh = (first_type == SVt_PVHV);
+				is_hoa = (first_type == SVt_PVAV);
+			}
+			ITER_KEEP_BEGIN(hv);
+			hv_iterinit(hv);
+			while ((entry = hv_iternext(hv))) {
+				SV *val = wt_got(aTHX_ hv_iterval(hv, entry));
+				if (is_flat_hash) {
+					if (val && SvROK(val)) {
+						croak("%" SVf ": Mixed data types detected. Ensure all values are scalars for a flat hash.\n", SVfARG(who));
+					}
+				} else {
+					if (!val || !SvROK(val) || SvTYPE(SvRV(val)) != (is_hoh ? SVt_PVHV : SVt_PVAV)) {
+						croak("%" SVf ": Mixed data types detected. Ensure all values are %s references.\n", SVfARG(who), is_hoh ? "HASH" : "ARRAY");
+					}
+				}
+			}
+			ITER_KEEP_END;
+			if (is_hoh) { // Rows are only explicitly pre-gathered for HOH
+/* A non-numeric row_names names the key column. It is refused when that name
+  is also a column being written -- in col_names if that was given, otherwise
+  a key of any inner hash -- since the file would then hold two columns of
+  that name, which read_table() cannot tell apart. Checked here, before the
+  output file is opened, so a refused call leaves an existing file intact.*/
+				rn_named = rn_name != NULL;
+				if (rn_named) {
+					bool clash = 0;
+					if (col_names_sv && SvOK(col_names_sv)) {
+						AV *c_av = (AV*)SvRV(col_names_sv);
+						for (SSize_t i = 0; !clash && i <= av_len(c_av); i++) {
+							SV **c = av_fetch(c_av, i, 0);
+							if (c && SvOK(*c) && sv_eq(*c, row_names_sv)) clash = 1;
+						}
+					} else {
+						ITER_KEEP_BEGIN(hv);
+						hv_iterinit(hv);
+						while (!clash && (entry = hv_iternext(hv))) {
+							if (hv_exists_ent((HV*)SvRV(wt_got(aTHX_ hv_iterval(hv, entry))), row_names_sv, 0)) clash = 1;
+						}
+						ITER_KEEP_END;
+					}
+					if (clash)
+						croak("%" SVf ": row_names '%" SVf "' collides with an existing column\n", SVfARG(who), SVfARG(row_names_sv));
+				}
+/* hv_iterkeysv() makes a mortal copy of each key, which nothing frees until the
+  call returns; the scope frees each one as soon as it is copied. */
+				rows_av = (AV*)sv_2mortal((SV*)newAV());
+				ITER_KEEP_BEGIN(hv);
+				hv_iterinit(hv);
+				while ((entry = hv_iternext(hv))) {
+					ENTER; SAVETMPS;
+					av_push(rows_av, newSVsv(hv_iterkeysv(entry)));
+					FREETMPS; LEAVE;
+				}
+				ITER_KEEP_END;
+			}
+		}
+	} else {
+		AV *av = (AV*)data_ref;
+		if (av_len(av) < 0) is_empty = 1;
+		else {
+			SV **first_ptr = av_fetch(av, 0, 0);
+			SV *first = first_ptr ? wt_got(aTHX_ *first_ptr) : NULL;
+			if (first && SvROK(first) && SvTYPE(SvRV(first)) == SVt_PVAV) {
+// Array of Arrays: every element must be an ARRAY reference.
+				for (SSize_t i = 0; i <= av_len(av); i++) {
+					SV **ptr = av_fetch(av, i, 0);
+					SV *e = ptr ? wt_got(aTHX_ *ptr) : NULL;
+					if (!e || !SvROK(e) || SvTYPE(SvRV(e)) != SVt_PVAV) {
+						croak("%" SVf ": Mixed data types detected in Array of Arrays. All elements must be ARRAY references.\n", SVfARG(who));
+					}
+				}
+				is_aoa = 1;
+			} else {
+				if (!first || !SvROK(first) || SvTYPE(SvRV(first)) != SVt_PVHV) {
+					if (first && SvROK(first))
+						croak("%" SVf ": For ARRAY data, every element must be a HASH reference "
+							  "(Array of Hashes) or all ARRAY references (Array of Arrays); element 0 is a reference of type '%s'\n", SVfARG(who),
+							  sv_reftype(SvRV(first), 0));
+					else if (first && SvOK(first))
+						croak("%" SVf ": For ARRAY data, every element must be a HASH reference "
+							  "(Array of Hashes) or all ARRAY references (Array of Arrays); element 0 is a non-reference scalar (value: '%s')\n", SVfARG(who),
+							  SvPV_nolen(first));
+					else
+						croak("%" SVf ": For ARRAY data, every element must be a HASH reference "
+							  "(Array of Hashes) or all ARRAY references (Array of Arrays); element 0 is undef\n", SVfARG(who));
+				}
+				for (SSize_t i = 0; i <= av_len(av); i++) {
+					SV **ptr = av_fetch(av, i, 0);
+					SV *e = ptr ? wt_got(aTHX_ *ptr) : NULL;
+					if (!e || !SvROK(e) || SvTYPE(SvRV(e)) != SVt_PVHV) {
+						croak("%" SVf ": Mixed data types detected in Array of Hashes. All elements must be HASH references.\n", SVfARG(who));
+					}
+				}
+				is_aoh = 1;
+			}
+		}
+	}
+/* A HoA takes its columns and its row count from the arrays col_names names,
+  so a col_names naming none leaves it with neither.  That is refused here,
+  before the output file is opened: it used to be refused after, which had
+  already emptied any existing file of that name. */
+	if (is_hoa && col_names_sv && SvOK(col_names_sv) && !wt_col_names_any(aTHX_ col_names_sv))
+		croak("%" SVf ": Could not get headers: 'col_names' names no column\n", SVfARG(who));
+/* A HoA's row_names => 'col' takes its labels from the array 'col', and one
+  the hash does not have used to give every row an empty label without a
+  word.  Refused here, before the file is opened. */
+	if (is_hoa && rn_name && !hv_exists_ent((HV*)data_ref, row_names_sv, 0))
+		croak("%" SVf ": row_names '%" SVf "' names no column of the hash of arrays\n", SVfARG(who),
+			SVfARG(row_names_sv));
+/* An AoA and a flat hash have no column to take labels from, so a name heads
+  their 1..n label column, as it heads a HoH's key column; it used to be
+  ignored, leaving that header cell empty.  As for a HoH, it is refused when a
+  column being written already has the name -- in col_names if given, else the
+  AoA's header row or the flat hash's keys -- since read_table() could not
+  tell the two apart. */
+	if ((is_aoa || is_flat_hash) && rn_name) {
+		bool clash = 0;
+		AV *names = NULL;	// the header row the name is compared with; NULL for a flat hash's keys
+		if (col_names_sv && SvOK(col_names_sv)) names = (AV*)SvRV(col_names_sv);
+		else if (is_aoa) {	// row 0 was checked to be an ARRAY reference above
+			SV **h0 = av_fetch((AV*)data_ref, 0, 0);
+			if (h0) names = (AV*)SvRV(wt_got(aTHX_ *h0));
+		}
+		if (names) {
+			for (SSize_t i = 0; !clash && i <= av_len(names); i++) {
+				SV **c = av_fetch(names, i, 0);
+				SV *cv = c ? wt_got(aTHX_ *c) : NULL;
+				if (cv && SvOK(cv) && !SvROK(cv) && sv_eq(cv, row_names_sv)) clash = 1;
+			}
+		} else clash = hv_exists_ent((HV*)data_ref, row_names_sv, 0);
+		if (clash)
+			croak("%" SVf ": row_names '%" SVf "' collides with an existing column\n", SVfARG(who), SVfARG(row_names_sv));
+	}
+/* An .xlsx worksheet holds 1048576 rows, header included (XLSX_MAX_ROWS).
+  Every shape but a HoA knows its row count already, and a table past it is
+  refused here, before the file is opened; a HoA's is the longest of the
+  arrays it writes, and is counted as the rows go out, in wt_xlsx_row(). */
+	if (xlsx) {
+		size_t rows = 0;	// header included; 0 = not known yet (a HoA, or no rows)
+		if (is_aoa)
+			rows = (size_t)(av_len((AV*)data_ref) + 1) + (col_names_sv && SvOK(col_names_sv) ? 1 : 0);
+		else if (is_aoh) rows = (size_t)(av_len((AV*)data_ref) + 1) + 1;
+		else if (is_hoh) rows = (size_t)(av_len(rows_av) + 1) + 1;
+		if (rows > XLSX_MAX_ROWS)
+			croak("%" SVf ": '%s' would have more than the %" UVuf " rows an Excel "
+				"worksheet holds, header included\n", SVfARG(who), file, (UV)XLSX_MAX_ROWS);
+	}
+	F->is_hoh = is_hoh; F->is_hoa = is_hoa; F->is_aoh = is_aoh;
+	F->is_flat_hash = is_flat_hash; F->is_aoa = is_aoa; F->is_empty = is_empty;
+	F->rn_named = rn_named;
+	F->rows_av = rows_av;
+}
+
+/*Write the table wt_frame_shape() checked to S, a record at a time.*/
+static void wt_frame_write(pTHX_ WtFrame *restrict F, const WtOpts *restrict O, WtSink *restrict S) {
+	SV *data_ref = F->data_ref;
+	SV *who = F->who;
+	SV *col_names_sv = O->col_names_sv;
+	SV *row_names_sv = O->row_names_sv;
+	const char *rn_name = O->rn_name;
+	const STRLEN rn_name_len = O->rn_name_len;
+	const char *undef_val = O->undef_val;
+	const STRLEN undef_len = O->undef_len;
+	const bool is_hoh = F->is_hoh, is_hoa = F->is_hoa, is_aoh = F->is_aoh;
+	const bool is_flat_hash = F->is_flat_hash, is_aoa = F->is_aoa, is_empty = F->is_empty;
+	const bool rn_named = F->rn_named;
+	AV *rows_av = F->rows_av;
+	AV *headers_av = (AV*)sv_2mortal((SV*)newAV());
+/* row_names is off unless asked for, in every format -- delimited, LaTeX and
+  .xlsx alike -- for every shape but a HoH. R's write.table() defaults it on,
+  and this used to follow suit, but a label column nobody asked for is the
+  wrong default here: the common case is a frame whose rows are already
+  identified by one of its own columns, and the leading empty header cell it
+  produces (",gene,n") is a well known nuisance to read back. row_names => 1
+  opts in and gives the old behaviour; row_names => 'col' uses that column's
+  values as the labels, and names the label column 'col'.
+  A HoH is the exception, and defaults it on: its outer keys are the only place
+  the row identifiers exist, not a 1..n index, so leaving them out silently
+  discards a column of data (an NCBI taxid-keyed HoH came out with no taxids).
+  There row_names => 'name' writes 'name' as the label column's header instead
+  of an empty cell, and row_names => 0 still turns the keys off.*/
+	bool inc_rownames = row_names_sv ? (SvTRUE(row_names_sv) ? TRUE : FALSE) : is_hoh;
+/* A HoA's or AoH's row_names => 'col' takes the labels from column 'col', and
+  the label column is headed 'col': the header cell used to be left empty, so
+  the column's name was lost and read_table() read it back as row_name.  pandas
+  writes an index's name over it the same way ("x,data\n1.0,1\n",
+  tests/io/formats/test_to_csv.py, test_to_csv_single_level_multi_index). */
+	const char *rownames_col = NULL;
+	STRLEN rownames_len = 0;
+	size_t n_unnamed = 0;	// data columns whose header cell is empty, set by wt_emit_header()
+	size_t first_unnamed = 0;	// 1-based file column of the first of them; 0 = none
+	size_t n_long = 0;	// AoA data rows longer than the header, for the warning at the end
+	size_t n_no_label = 0;	// AoH rows with no row_names column, for the warning at the end
+	size_t first_long = 0, first_long_width = 0, header_width = 0;	// the first of them, its cells, the header's
+	if (is_hoh) {// ----- Hash of Hashes -----
+		if (col_names_sv && SvOK(col_names_sv)) {
+			wt_headers_given(aTHX_ headers_av, col_names_sv, FALSE);
+		} else {
+			HV *col_map = (HV*)sv_2mortal((SV*)newHV());
+			ITER_KEEP_BEGIN((HV*)data_ref);
+			hv_iterinit((HV*)data_ref);
+			HE *entry;
+			while ((entry = hv_iternext((HV*)data_ref))) {
+				HV *inner = (HV*)SvRV(wt_got(aTHX_ hv_iterval((HV*)data_ref, entry)));
+/* The keys of a tied or UTF-8 row are taken through mortal SVs, and nothing
+  frees a mortal until the call returns: one SV per cell of the table, 212 MB
+  over the data's own for a 200000 x 20 HoH, when every key went that way.
+  The scope frees them a row at a time, and the lvalue fetch in
+  wt_collect_keys() makes a column's entry only when it is new. */
+				ENTER; SAVETMPS;
+				wt_collect_keys(aTHX_ col_map, inner);
+				FREETMPS; LEAVE;
+			}
+			ITER_KEEP_END;
+			hv_iterinit(col_map);
+			HE *ce;
+			while ((ce = hv_iternext(col_map)))
+				av_push(headers_av, newSVsv(hv_iterkeysv(ce)));
+			const size_t num_cols = (size_t)(av_len(headers_av) + 1);
+			if (num_cols > 1)
+				sortsv(AvARRAY(headers_av), num_cols, Perl_sv_cmp);
+		}
+// NULL = no key column, "" = unnamed, else the name checked above
+		const char *rn_header = !inc_rownames ? NULL : rn_named ? rn_name : "";
+		const size_t num_headers = wt_emit_header(aTHX_ S, headers_av, rn_header,
+			rn_header == rn_name ? rn_name_len : 0, &n_unnamed, &first_unnamed);
+		const size_t num_rows = (size_t)(av_len(rows_av) + 1);
+		sortsv(AvARRAY(rows_av), num_rows, Perl_sv_cmp);
+		HV *data_hv = (HV*)data_ref;
+		WtRow R;
+		wt_row_init(aTHX_ &R, num_headers + 1);
+		R.who = who;
+		for (size_t i = 0; i < num_rows; i++) {
+			ENTER; SAVETMPS;	// a tied row's proxies, freed a row at a time
+			R.n = 0;
+			SV *row_key_sv = AvARRAY(rows_av)[i];	//av_push()ed by the HoH scan: no holes
+			if (inc_rownames) {
+				STRLEN key_len;
+				const char *ks = SvPV(row_key_sv, key_len);
+				wt_field(&R, ks, key_len);
+			}
+			HE *inner_he = hv_fetch_ent(data_hv, row_key_sv, 0, 0);
+			SV *inner_sv = inner_he ? wt_got(aTHX_ HeVAL(inner_he)) : NULL;
+			HV *inner_hv = (inner_sv && SvROK(inner_sv)) ? (HV*)SvRV(inner_sv) : NULL;
+			for (size_t j = 0; j < num_headers; j++) {
+				SV **h_ptr = av_fetch(headers_av, (SSize_t)j, 0);
+				SV *h_sv = (h_ptr && SvOK(*h_ptr)) ? *h_ptr : NULL;
+				// FIX (UTF-8/NUL safety): fetch by SV, not by raw bytes
+				HE *cell_he = (inner_hv && h_sv) ? wt_fetch(aTHX_ inner_hv, h_sv) : NULL;
+				wt_cell(aTHX_ &R, cell_he ? HeVAL(cell_he) : NULL, undef_val, undef_len);
+			}
+			print_string_row(aTHX_ S, &R);
+			FREETMPS; LEAVE;
+		}
+	} else if (is_flat_hash) {// Flat Hash
+		HV *data_hv = (HV*)data_ref;
+		if (col_names_sv && SvOK(col_names_sv)) {
+			wt_headers_given(aTHX_ headers_av, col_names_sv, FALSE);
+		} else {
+/* UTF-8 safety: keep the key SVs (flags intact) and sort
+  them with sv_cmp instead of round-tripping through char*.*/
+			ITER_KEEP_BEGIN(data_hv);
+			hv_iterinit(data_hv);
+			HE *ce;
+			while ((ce = hv_iternext(data_hv)))
+				av_push(headers_av, newSVsv(hv_iterkeysv(ce)));
+			ITER_KEEP_END;
+			const size_t num_cols = (size_t)(av_len(headers_av) + 1);
+			if (num_cols > 1)
+				sortsv(AvARRAY(headers_av), num_cols, Perl_sv_cmp);
+		}
+		const size_t num_headers = wt_emit_header(aTHX_ S, headers_av,
+			!inc_rownames ? NULL : rn_name ? rn_name : "", rn_name ? rn_name_len : 0,	// a name heads the 1..n labels
+			&n_unnamed, &first_unnamed);
+		WtRow R;
+		wt_row_init(aTHX_ &R, num_headers + 1);
+		R.who = who;
+// Give the single row a default numeric identifier if row names are on
+		if (inc_rownames) wt_field(&R, "1", 1);
+		for (size_t j = 0; j < num_headers; j++) {
+			SV **h_ptr = av_fetch(headers_av, (SSize_t)j, 0);
+			SV *h_sv = (h_ptr && SvOK(*h_ptr)) ? *h_ptr : NULL;
+			HE *val_he = h_sv ? wt_fetch(aTHX_ data_hv, h_sv) : NULL;
+			wt_cell(aTHX_ &R, val_he ? HeVAL(val_he) : NULL, undef_val, undef_len);
+		}
+		print_string_row(aTHX_ S, &R);
+	} else if (is_hoa) {// Hash of Arrays
+		HV *data_hv = (HV*)data_ref;
+		if (col_names_sv && SvOK(col_names_sv)) {
+			wt_headers_given(aTHX_ headers_av, col_names_sv, FALSE);
+		} else {
+			ITER_KEEP_BEGIN(data_hv);
+			hv_iterinit(data_hv);
+			HE *ce;
+			while ((ce = hv_iternext(data_hv)))
+				av_push(headers_av, newSVsv(hv_iterkeysv(ce)));
+			ITER_KEEP_END;
+			const size_t num_cols = (size_t)(av_len(headers_av) + 1);
+			if (num_cols > 1)
+				sortsv(AvARRAY(headers_av), num_cols, Perl_sv_cmp);
+		}
+		if (inc_rownames && rn_name) {
+			rownames_col = rn_name;
+			rownames_len = rn_name_len;
+			AV *filtered_headers = (AV*)sv_2mortal((SV*)newAV());
+			for (SSize_t i = 0; i <= av_len(headers_av); i++) {
+				SV **h_ptr = av_fetch(headers_av, i, 0);
+				if (!h_ptr || !*h_ptr) continue;
+				SV *h_sv = *h_ptr;
+				if (!sv_eq(h_sv, row_names_sv)) {
+					av_push(filtered_headers, newSVsv(h_sv));
+				}
+			}
+			headers_av = filtered_headers;
+		}
+		const size_t num_headers = wt_emit_header(aTHX_ S, headers_av,
+			!inc_rownames ? NULL : rownames_col ? rownames_col : "", rownames_len,
+			&n_unnamed, &first_unnamed);
+/* Each column's array is looked up once, not once per cell: on a 200000 x 20
+  HoA that was 4 million hash lookups, and the table went from 0.209s to 0.155s
+  without them.  The row count is the longest of the arrays actually written --
+  those columns and the label column -- where it used to be the longest in the
+  hash, so a col_names leaving out a longer array wrote rows of nothing but
+  separators after the data ran out. */
+		AV **col_avs;
+		Newx(col_avs, num_headers ? num_headers : 1, AV *);
+		SAVEFREEPV(col_avs);
+		size_t max_rows = 0;
+		for (size_t j = 0; j < num_headers; j++) {
+			SV **h_ptr = av_fetch(headers_av, (SSize_t)j, 0);
+			SV *h_sv = (h_ptr && SvOK(*h_ptr)) ? *h_ptr : NULL;
+			HE *arr_he = h_sv ? wt_fetch(aTHX_ data_hv, h_sv) : NULL;
+			SV *arr_sv = arr_he ? wt_got(aTHX_ HeVAL(arr_he)) : NULL;
+			col_avs[j] = (arr_sv && SvROK(arr_sv)) ? (AV*)SvRV(arr_sv) : NULL;
+			const size_t len = col_avs[j] ? (size_t)(av_len(col_avs[j]) + 1) : 0;
+			if (len > max_rows) max_rows = len;
+		}
+		AV *rn_av = NULL;	// the label column's array, when row_names names one
+		if (rownames_col) {
+			HE *rn_he = hv_fetch_ent(data_hv, row_names_sv, 0, 0);
+			SV *rn_sv = rn_he ? wt_got(aTHX_ HeVAL(rn_he)) : NULL;
+			rn_av = (rn_sv && SvROK(rn_sv)) ? (AV*)SvRV(rn_sv) : NULL;
+			const size_t len = rn_av ? (size_t)(av_len(rn_av) + 1) : 0;
+			if (len > max_rows) max_rows = len;
+		}
+		WtRow R;
+		wt_row_init(aTHX_ &R, num_headers + 1);
+		R.who = who;
+		char rn_buf[TYPE_DIGITS(UV) + 1];
+		for (size_t i = 0; i < max_rows; i++) {
+			ENTER; SAVETMPS;	// a tied column's proxies, freed a row at a time
+			R.n = 0;
+			if (inc_rownames) {
+				if (rownames_col) {
+					SV **rn_val_ptr = rn_av ? av_fetch(rn_av, (SSize_t)i, 0) : NULL;
+					wt_cell(aTHX_ &R, rn_val_ptr ? *rn_val_ptr : NULL, undef_val, undef_len);
+				} else {
+					const int k = my_snprintf(rn_buf, sizeof(rn_buf), "%" UVuf, (UV)(i + 1));
+					wt_field(&R, rn_buf, (STRLEN)k);
+				}
+			}
+			for (size_t j = 0; j < num_headers; j++) {
+				SV **cell_ptr = col_avs[j] ? av_fetch(col_avs[j], (SSize_t)i, 0) : NULL;
+				wt_cell(aTHX_ &R, cell_ptr ? *cell_ptr : NULL, undef_val, undef_len);
+			}
+			print_string_row(aTHX_ S, &R);
+			FREETMPS; LEAVE;
+		}
+	} else if (is_aoh) { // Array of Hashes
+		AV *data_av = (AV*)data_ref;
+		size_t num_rows = (size_t)(av_len(data_av) + 1);
+		if (col_names_sv && SvOK(col_names_sv)) {
+			wt_headers_given(aTHX_ headers_av, col_names_sv, FALSE);
+		} else {
+			HV *col_map = (HV*)sv_2mortal((SV*)newHV());
+			for (size_t i = 0; i < num_rows; i++) {
+				ENTER; SAVETMPS;	// the key copies wt_collect_keys() can make: see the HoH branch
+				SV **row_ptr = av_fetch(data_av, (SSize_t)i, 0);
+				SV *row_sv = row_ptr ? wt_got(aTHX_ *row_ptr) : NULL;
+				if (row_sv && SvROK(row_sv))
+					wt_collect_keys(aTHX_ col_map, (HV*)SvRV(row_sv));
+				FREETMPS; LEAVE;
+			}
+/* UTF-8 safety: keep the key SVs (flags intact) and sort
+  them with sv_cmp instead of round-tripping through char*.*/
+			hv_iterinit(col_map);
+			HE *ce;
+			while ((ce = hv_iternext(col_map)))
+				av_push(headers_av, newSVsv(hv_iterkeysv(ce)));
+			const size_t num_cols = (size_t)(av_len(headers_av) + 1);
+			if (num_cols > 1)
+				sortsv(AvARRAY(headers_av), num_cols, Perl_sv_cmp);
+		}
+		if (inc_rownames && rn_name) {
+			rownames_col = rn_name;
+			rownames_len = rn_name_len;
+			AV *filtered_headers = (AV*)sv_2mortal((SV*)newAV());
+			for (SSize_t i = 0; i <= av_len(headers_av); i++) {
+				SV **h_ptr = av_fetch(headers_av, i, 0);
+				if (!h_ptr || !*h_ptr) continue;
+				SV *h_sv = *h_ptr;
+				if (!sv_eq(h_sv, row_names_sv)) {
+					av_push(filtered_headers, newSVsv(h_sv));
+				}
+			}
+			headers_av = filtered_headers;
+		}
+		const size_t num_headers = wt_emit_header(aTHX_ S, headers_av,
+			!inc_rownames ? NULL : rownames_col ? rownames_col : "", rownames_len,
+			&n_unnamed, &first_unnamed);
+		WtRow R;
+		wt_row_init(aTHX_ &R, num_headers + 1);
+		R.who = who;
+		char rn_buf[TYPE_DIGITS(UV) + 1];
+		for (size_t i = 0; i < num_rows; i++) {
+			ENTER; SAVETMPS;	// a tied row's proxies, freed a row at a time
+			R.n = 0;
+			SV **row_ptr = av_fetch(data_av, (SSize_t)i, 0);
+			SV *row_sv = row_ptr ? wt_got(aTHX_ *row_ptr) : NULL;
+			HV *row_hv = (row_sv && SvROK(row_sv)) ? (HV*)SvRV(row_sv) : NULL;
+			if (inc_rownames) {
+				if (rownames_col) {
+					HE *rn_he = row_hv ? wt_fetch(aTHX_ row_hv, row_names_sv) : NULL;
+					if (!rn_he) n_no_label++;
+					wt_cell(aTHX_ &R, rn_he ? HeVAL(rn_he) : NULL, undef_val, undef_len);
+				} else {
+					const int k = my_snprintf(rn_buf, sizeof(rn_buf), "%" UVuf, (UV)(i + 1));
+					wt_field(&R, rn_buf, (STRLEN)k);
+				}
+			}
+			for (size_t j = 0; j < num_headers; j++) {
+				SV **h_ptr = av_fetch(headers_av, (SSize_t)j, 0);
+				SV *h_sv = (h_ptr && SvOK(*h_ptr)) ? *h_ptr : NULL;
+				HE *cell_he = (row_hv && h_sv) ? wt_fetch(aTHX_ row_hv, h_sv) : NULL;
+				wt_cell(aTHX_ &R, cell_he ? HeVAL(cell_he) : NULL, undef_val, undef_len);
+			}
+			print_string_row(aTHX_ S, &R);
+			FREETMPS; LEAVE;
+		}
+	} else if (is_aoa) {// ----- Array of Arrays
+		AV *data_av = (AV*)data_ref;
+		SSize_t last = av_len(data_av);   // index of last element
+		SSize_t data_start = 0;            // first data-row index
+/* Headers: explicit col_names, else the first inner array (which is
+  then consumed as the header rather than emitted as data).*/
+		if (col_names_sv && SvOK(col_names_sv)) {
+			wt_headers_given(aTHX_ headers_av, col_names_sv, TRUE);	// positional: an undef keeps its column
+		} else {
+			SV **h0 = av_fetch(data_av, 0, 0);
+			SV *h0_sv = h0 ? wt_got(aTHX_ *h0) : NULL;
+			AV *h_av = (h0_sv && SvROK(h0_sv)) ? (AV*)SvRV(h0_sv) : NULL;
+			if (h_av) {
+				for (SSize_t i = 0; i <= av_len(h_av); i++) {
+					SV **c = av_fetch(h_av, i, 0);
+					SV *cv = c ? wt_got(aTHX_ *c) : NULL;
+					if (cv && SvROK(cv))	// refused as a data cell is: it was written as its address
+						croak("%" SVf ": Cannot write nested reference types to table\n", SVfARG(who));
+					SV *copy = newSVpvs("");
+					if (cv && SvOK(cv)) sv_setsv_nomg(copy, cv);
+					av_push(headers_av, copy);
+				}
+			}
+			data_start = 1;
+		}
+/* A data row longer than the header used to lose its extra cells without a
+  word.  The header is widened to the longest row instead, with an empty cell
+  over each column it gains, which is the shape pandas gives
+  DataFrame([[1, 2], [4, 5, 6]]) (tests/io/json/test_pandas.py,
+  test_frame_from_json_missing_data, pins the padding), and R's write.table()
+  has headed every column since 2.0.1, which wrote 3 headers over 4 columns
+  (tests/reg-tests-2.R).  The rows that forced it are warned about at the end,
+  in place of the empty-header warning those cells would otherwise draw. */
+		header_width = (size_t)(av_len(headers_av) + 1);
+		size_t widest = header_width;
+		for (SSize_t r = data_start; r <= last; r++) {
+			SV **row_ptr = av_fetch(data_av, r, 0);
+			SV *row_sv = row_ptr ? wt_got(aTHX_ *row_ptr) : NULL;
+			if (!row_sv || !SvROK(row_sv)) continue;
+			const size_t w = (size_t)(av_len((AV*)SvRV(row_sv)) + 1);
+			if (w > header_width && n_long++ == 0) {
+				first_long = (size_t)(r - data_start) + 1;
+				first_long_width = w;
+			}
+			if (w > widest) widest = w;
+		}
+		for (size_t k = header_width; k < widest; k++) av_push(headers_av, newSVpvs(""));
+		const size_t num_headers = wt_emit_header(aTHX_ S, headers_av,
+			!inc_rownames ? NULL : rn_name ? rn_name : "", rn_name ? rn_name_len : 0,	// a name heads the 1..n labels
+			&n_unnamed, &first_unnamed);
+		n_unnamed -= widest - header_width;	// the widened cells, warned about as long rows instead
+		WtRow R;
+		wt_row_init(aTHX_ &R, num_headers + 1);
+		R.who = who;
+		char rn_buf[TYPE_DIGITS(UV) + 1]; // numeric row labels, printed before reuse (see HoA)
+		size_t rn = 0;	// the last row label written
+		for (SSize_t r = data_start; r <= last; r++) {
+			ENTER; SAVETMPS;	// a tied row's proxies, freed a row at a time
+			R.n = 0;
+			if (inc_rownames) {
+				const int k = my_snprintf(rn_buf, sizeof(rn_buf), "%" UVuf, (UV)++rn);
+				wt_field(&R, rn_buf, (STRLEN)k);
+			}
+			SV **row_ptr = av_fetch(data_av, r, 0);
+			SV *row_sv = row_ptr ? wt_got(aTHX_ *row_ptr) : NULL;
+			AV *row_av = (row_sv && SvROK(row_sv)) ? (AV*)SvRV(row_sv) : NULL;
+			for (size_t j = 0; j < num_headers; j++) {
+				SV **cell_ptr = row_av ? av_fetch(row_av, (SSize_t)j, 0) : NULL;
+				wt_cell(aTHX_ &R, cell_ptr ? *cell_ptr : NULL, undef_val, undef_len);
+			}
+			print_string_row(aTHX_ S, &R);
+			FREETMPS; LEAVE;
+		}
+	} else if (is_empty) {// ----- no rows: the header alone
+		if (col_names_sv && SvOK(col_names_sv))
+			wt_headers_given(aTHX_ headers_av, col_names_sv, FALSE);
+		const char *rn_header = !inc_rownames ? NULL : rn_name ? rn_name : "";
+		(void)wt_emit_header(aTHX_ S, headers_av, rn_header,
+			rn_header == rn_name ? rn_name_len : 0, &n_unnamed, &first_unnamed);
+	}
+	F->inc_rownames = inc_rownames;
+	F->n_unnamed = n_unnamed; F->first_unnamed = first_unnamed;
+	F->n_long = n_long; F->first_long = first_long;
+	F->first_long_width = first_long_width; F->header_width = header_width;
+	F->n_no_label = n_no_label;
+}
+
+/*The warnings writing one table gave cause for.*/
+static void wt_frame_warn(pTHX_ const WtFrame *restrict F, const WtOpts *restrict O) {
+	SV *who = F->who;
+	SV *row_names_sv = O->row_names_sv;
+	const char *file = O->file;
+	const bool is_hoh = F->is_hoh, inc_rownames = F->inc_rownames, rn_named = F->rn_named;
+	const size_t n_unnamed = F->n_unnamed, first_unnamed = F->first_unnamed;
+	const size_t n_long = F->n_long, first_long = F->first_long;
+	const size_t first_long_width = F->first_long_width, header_width = F->header_width;
+	const size_t n_no_label = F->n_no_label;
+/* An empty header cell is warned about, because the file then gives that column
+  no name to address it by, and every reader invents one: read_table() says
+  row_name, pandas "Unnamed: 0". For a HoH the empty cell is the key column's,
+  and row_names => 'name' names it, so the warning says so. Every other shape
+  writes its label cell empty only when row_names => 1 asked for it -- R's own
+  layout -- and nothing can name it, so warning there could not be silenced.
+  write_table() calls this last, for the reason given there.*/
+	if (is_hoh && inc_rownames && !rn_named)
+		warn("%" SVf ": the row-name column (column 1) of '%s' has no name in "
+			"the header; name it with row_names => 'name', or drop it with "
+			"row_names => 0\n", SVfARG(who), file);
+	if (n_unnamed)
+		warn("%" SVf ": %" UVuf " column%s of '%s' ha%s no name in the header "
+			"(the first is column %" UVuf ")\n", SVfARG(who), (UV)n_unnamed,
+			n_unnamed == 1 ? "" : "s", file, n_unnamed == 1 ? "s" : "ve",
+			(UV)first_unnamed);
+	if (n_long)
+		warn("%" SVf ": %" UVuf " data row%s of '%s' ha%s more cells than the "
+			"header's %" UVuf " (the first is row %" UVuf ", with %" UVuf "); the "
+			"extra cells are written under empty header cells\n", SVfARG(who), (UV)n_long,
+			n_long == 1 ? "" : "s", file, n_long == 1 ? "s" : "ve",
+			(UV)header_width, (UV)first_long, (UV)first_long_width);
+/* An AoH row without the row_names column has no label, and is written with
+  undef_val in its place; one warning for the file, not one per row. */
+	if (n_no_label)
+		warn("%" SVf ": %" UVuf " row%s of '%s' ha%s no '%" SVf "' (row_names); "
+			"%s label is written as undef_val\n", SVfARG(who), (UV)n_no_label,
+			n_no_label == 1 ? "" : "s", file, n_no_label == 1 ? "s" : "ve",
+			SVfARG(row_names_sv), n_no_label == 1 ? "its" : "their");
+}
+
+/*What a value of a hash handed to write_table() is: whether the hash is a data
+frame (a HoA's column, a HoH's row) or a workbook of them (a frame).  A frame
+is an array or hash whose first defined element is itself a reference, where a
+column or a row holds scalars.  Get magic runs on each element looked at.
+
+A tied array or hash is not looked into: write_table() reads it once, as it
+writes it, and t/tied.fetch.once.t checks that no tied value is FETCHed twice.
+Copying it first (frame_untied() with UNTIE_COLS and UNTIE_ROWS) was tried, and
+on perls up to 5.16 a FETCH that died inside the copy leaked an SV, which
+t/write_table.t catches.  So a tied value says nothing either way, and a
+workbook needs at least one sheet that is not tied for it to be recognised.*/
+static unsigned short int wt_value_kind(pTHX_ SV *v) // 0 = not an array or hash, 1 = empty, 2 = a column or row, 3 = a frame, 4 = tied, not looked into
+{
+	//not restrict: v is perl-managed, and a tied FETCH can reach it again
+	if (!v || !SvROK(v)) return 0;
+	SV *c = SvRV(v);
+	if ((SvTYPE(c) == SVt_PVAV || SvTYPE(c) == SVt_PVHV) && SvRMAGICAL(c) && mg_find(c, PERL_MAGIC_tied))
+		return 4;
+	SV *first = NULL;	// the first defined element; read after the loops
+	if (SvTYPE(c) == SVt_PVAV) {
+		AV *av = (AV*)c;
+		for (SSize_t i = 0; !first && i <= av_len(av); i++) {
+			SV **e = av_fetch(av, i, 0);
+			SV *ev = e ? wt_got(aTHX_ *e) : NULL;
+			if (ev && SvOK(ev)) first = ev;
+		}
+	} else if (SvTYPE(c) == SVt_PVHV) {
+		HV *hv = (HV*)c;
+/* A plain hash is read straight out of its buckets, as wt_collect_keys() reads
+  one and for its reason: iterating would give every row of a HoH an iterator,
+  which t/write_table.quoting.t checks it does not have. */
+		if (SvRMAGICAL((SV*)hv)) {
+			ITER_KEEP_BEGIN(hv);
+			hv_iterinit(hv);
+			for (HE *e; !first && (e = hv_iternext(hv)) != NULL; ) {
+				SV *ev = wt_got(aTHX_ hv_iterval(hv, e));
+				if (ev && SvOK(ev)) first = ev;
+			}
+			ITER_KEEP_END;
+		} else if (HvARRAY(hv)) {
+			HE **arr = HvARRAY(hv);	// no restrict: the hash's own bucket array
+			for (size_t b = 0; !first && b <= (size_t)HvMAX(hv); b++)
+				for (HE *he = arr[b]; !first && he; he = HeNEXT(he)) {
+					SV *ev = HeVAL(he);
+					if (ev != &PL_sv_placeholder && SvOK(ev)) first = ev;
+				}
+		}
+	} else return 0;
+	if (!first) return 1;
+	return SvROK(first) ? 3 : 2;
+}
+
+/*Is the hash handed to write_table() a workbook -- a hash of data frames, one
+worksheet per key -- rather than a data frame itself?  It is when any of its
+values is a frame (wt_value_kind()).  Every value must then be a frame, an
+empty [] or {}, which is a worksheet of no rows, or a tied container, which
+wt_frame_shape() checks as it checks any sheet; anything else is refused,
+naming the key.  A hash whose values are all empty is not a workbook but the HoA
+or HoH of no rows it always was.
+
+Up to 0.34 such a hash was taken for a HoA or HoH, and refused as one: "Cannot
+write nested reference types to table".*/
+static bool wt_is_book(pTHX_ HV *hv) {
+	SV *frame_key = NULL, *other_key = NULL;	// a key whose value is a frame, and one whose value is neither a frame nor empty
+	ITER_KEEP_BEGIN(hv);
+	hv_iterinit(hv);
+	for (HE *e; (e = hv_iternext(hv)) != NULL; ) {
+		const unsigned short int kind = wt_value_kind(aTHX_ wt_got(aTHX_ hv_iterval(hv, e)));
+		if (kind == 3 && !frame_key) frame_key = sv_2mortal(newSVsv(hv_iterkeysv(e)));
+		else if ((kind == 0 || kind == 2) && !other_key) other_key = sv_2mortal(newSVsv(hv_iterkeysv(e)));
+		if (frame_key && other_key) break;
+	}
+	ITER_KEEP_END;
+	if (frame_key && other_key)
+		croak("write_table: the value of '%" SVf "' is a data frame, which makes 'data' a workbook "
+			"of one worksheet per key, but the value of '%" SVf "' is not a data frame\n",
+			SVfARG(frame_key), SVfARG(other_key));
+	return frame_key != NULL;
+}
+
+/*Check a worksheet name, a UTF-8 SV, as Excel::Writer::XLSX 1.15 and XlsxWriter
+1.3.9 check one (_check_sheetname() in Workbook.pm and workbook.py), and as
+openpyxl 3.1.5 did before them (the title setter in openpyxl/workbook/child.py):
+an empty name, one holding any of \ * ? : / [ ], and one starting or ending
+with an apostrophe are refused.  Excel refuses all of these.  The apostrophe
+was let through up to 0.34.
+
+A name longer than 31 characters is warned about rather than refused, as
+openpyxl does -- "Some applications may not be able to read the file", Excel
+first among them; both writers refuse it -- and the return says whether this one
+is.  key says where the name came from: a key of the workbook hash, or
+'xlsx_sheet'.*/
+static bool wt_sheet_name_check(pTHX_ SV *name, bool key) {
+	STRLEN snl;
+	const char *sn = SvPVutf8(name, snl);	// already UTF-8, so a no-op that says so; no restrict: a PV perl may share (COW)
+	if (snl == 0) {
+		if (key) croak("write_table: 'data' has an empty key, and a worksheet name must have at least one character\n");
+		usage_croak(aTHX_ "write_table", "'xlsx_sheet' must have at least one character");
+	}
+	for (STRLEN i = 0; i < snl; i++)
+		if (sn[i] && strchr("\\*?:/[]", sn[i])) {
+			if (key) croak("write_table: worksheet name '%" SVf "' may not contain '%c'\n", SVfARG(name), sn[i]);
+			usage_croak(aTHX_ "write_table", "'xlsx_sheet' may not contain '%c'", sn[i]);
+		}
+	if (sn[0] == '\'' || sn[snl - 1] == '\'') {
+		if (key) croak("write_table: worksheet name '%" SVf "' may not start or end with an apostrophe\n", SVfARG(name));
+		usage_croak(aTHX_ "write_table", "'xlsx_sheet' may not start or end with an apostrophe");
+	}
+	return utf8_length((const U8*)sn, (const U8*)sn + snl) > 31;
+}
+
+/*Refuse a workbook two of whose worksheet names are the same with case ignored,
+which Excel cannot open ("We found a problem with some content").  The two
+writers above refuse it, comparing lc() of each name, and so does this, through
+Stats::LikeR::_sheet_name_clash(): perl's lc() folds every character a UTF-8
+string holds, which C has no portable way to do.  names are UTF-8 SVs.*/
+static void wt_sheet_names_distinct(pTHX_ AV *names) {
+	if (av_len(names) < 1) return;
+	dSP;
+	ENTER;
+	SAVETMPS;
+	PUSHMARK(SP);
+	EXTEND(SP, av_len(names) + 1);
+	for (SSize_t i = 0; i <= av_len(names); i++) PUSHs(AvARRAY(names)[i]);
+	PUTBACK;
+	const I32 cnt = call_pv("Stats::LikeR::_sheet_name_clash", G_ARRAY);
+	SPAGAIN;
+	SV *b = cnt == 2 ? newSVsv(POPs) : NULL;	// copied out before FREETMPS frees the returns
+	SV *a = cnt == 2 ? newSVsv(POPs) : NULL;
+	if (cnt != 2) SP -= cnt;
+	PUTBACK;
+	FREETMPS;
+	LEAVE;
+	if (a) {
+		sv_2mortal(a);	// only now: made mortal inside SAVETMPS, FREETMPS would have freed them too
+		sv_2mortal(b);
+		croak("write_table: worksheet names '%" SVf "' and '%" SVf "' are the same with case "
+			"ignored, which Excel cannot open\n", SVfARG(a), SVfARG(b));
+	}
 }
 
 #ifndef M_1_SQRT_2PI
@@ -10948,7 +11794,7 @@ static void pc_svd(const NV *restrict X, size_t n, size_t p,
 	for (size_t j = 0; j < p; j++) Vc[j * p + j] = 1.0;
 	const NV tol = nv_sqrt((NV)m) * NV_EPSILON;
 	for (unsigned short sweep = 0; sweep < PC_SVD_MAX_SWEEPS; sweep++) {
-		bool rotated = FALSE;
+		bool rotated = 0;
 		for (size_t i = 0; i + 1 < p; i++) {
 			for (size_t j = i + 1; j < p; j++) {
 				NV *restrict ai = A + i * m;
@@ -10960,7 +11806,7 @@ static void pc_svd(const NV *restrict X, size_t n, size_t p,
 					gamma += ai[r] * aj[r];
 				}
 				if (gamma == 0.0 || nv_fabs(gamma) <= tol * nv_sqrt(alpha) * nv_sqrt(beta)) continue;
-				rotated = TRUE;
+				rotated = 1;
 				const NV zeta = (beta - alpha) / (2.0 * gamma);
 				const NV az = nv_fabs(zeta);
 				/*1/(|z| + sqrt(1 + z^2)), and its limit 1/(2|z|) where z^2 would
@@ -11471,7 +12317,7 @@ Called after the cell's get magic has run.*/
 PERL_STATIC_INLINE bool flt_declines(pTHX_ flt_prog *pg, SV *cell) {
 	PERL_UNUSED_CONTEXT;
 	if (!SvAMAGIC(cell)) return FALSE;
-	pg->declined = TRUE;
+	pg->declined = 1;
 	return TRUE;
 }
 
@@ -11566,7 +12412,7 @@ static bool flt_eval(pTHX_ flt_prog *pg, const flt_node *nd) {
 /*The root's answer for the cells now in pg->cells: 1 keep, 0 drop, -1 the
 row is the closure's to decide (flt_declines()).*/
 PERL_STATIC_INLINE short int flt_answer(pTHX_ flt_prog *pg) {
-	pg->declined = FALSE;
+	pg->declined = 0;
 	const bool k = flt_eval(aTHX_ pg, &pg->nodes[0]);
 	return pg->declined ? -1 : (k ? 1 : 0);
 }
@@ -12051,9 +12897,9 @@ static void flt_reg_row(pTHX_ HV *row, HV *out, AV *order) {
 	}
 	HE **arr = HvARRAY(row);	// no restrict: the hash's own bucket array
 	if (!arr) return;
-	bool keep_hash = TRUE;	// FALSE when the stored hashes are not `out`'s
+	bool keep_hash = 1;	// FALSE when the stored hashes are not `out`'s
 #ifdef HvREHASH
-	if (HvREHASH(row)) keep_hash = FALSE;
+	if (HvREHASH(row)) keep_hash = 0;
 #endif
 	for (size_t b = 0; b <= (size_t)HvMAX(row); b++) {
 		for (HE *he = arr[b]; he; he = HeNEXT(he)) {
@@ -12140,18 +12986,18 @@ static void flt_check_cols(pTHX_ SV *cols, HV *inhv, AV *inav, bool hoa) {
 	for (SSize_t j = 0; j < nw; j++) {
 		SV *nm = av_at(aTHX_ want, j);
 		if (nm && SvOK(nm) && !SvROK(nm)) left++;
-		else found[j] = TRUE;	//not a name: nothing to look for
+		else found[j] = 1;	//not a name: nothing to look for
 	}
-	bool any_row = FALSE;	//the frame had a row to look in; read after the walks
+	bool any_row = 0;	//the frame had a row to look in; read after the walks
 	if (inav) {
 		const SSize_t n = av_len(inav) + 1;
 		for (SSize_t i = 0; i < n && left; i++) {
 			SV *rv = av_row_at(aTHX_ inav, i);
 			if (!rv) continue;	//not a row: the filter pass says so
-			any_row = TRUE;
+			any_row = 1;
 			HV *row = (HV *)SvRV(rv);
 			for (SSize_t j = 0; j < nw; j++)
-				if (!found[j] && hv_exists_ent(row, av_at(aTHX_ want, j), 0)) { found[j] = TRUE; left--; }
+				if (!found[j] && hv_exists_ent(row, av_at(aTHX_ want, j), 0)) { found[j] = 1; left--; }
 		}
 	} else {
 		HE *e;
@@ -12161,10 +13007,10 @@ static void flt_check_cols(pTHX_ SV *cols, HV *inhv, AV *inav, bool hoa) {
 			SV *v = hv_iterval(inhv, e);
 			SvGETMAGIC(v);
 			if (!SvROK(v) || SvTYPE(SvRV(v)) != SVt_PVHV) continue;	//the filter pass says so
-			any_row = TRUE;
+			any_row = 1;
 			HV *row = (HV *)SvRV(v);
 			for (SSize_t j = 0; j < nw; j++)
-				if (!found[j] && hv_exists_ent(row, av_at(aTHX_ want, j), 0)) { found[j] = TRUE; left--; }
+				if (!found[j] && hv_exists_ent(row, av_at(aTHX_ want, j), 0)) { found[j] = 1; left--; }
 		}
 		if (HV_IS_TIED(inhv)) while (hv_iternext(inhv)) {}	//finish a tied walk rather than restart it: see cfilter
 		ITER_KEEP_END;
@@ -15451,7 +16297,7 @@ static void lm_formula_terms(pTHX_ char *rhs, const char *lhs,
 	say that at all.*/
 		if (strchr(chunk, '-') && !lm_names_column(aTHX_ data_hoa, row_hashes, n, chunk)) {
 			char *part = chunk;   //the segment being scanned: chunk's own term, then each one removed
-			bool head = TRUE;
+			bool head = 1;
 			int depth = 0;
 			for (char *q = chunk; ; q++) {
 				if (*q == '(') depth++;
@@ -15459,7 +16305,7 @@ static void lm_formula_terms(pTHX_ char *rhs, const char *lhs,
 				else if (*q == '\0' || (*q == '-' && depth == 0)) {
 					const bool end = (*q == '\0');
 					*q = '\0';
-					if (head) head = FALSE;   //chunk now ends here and is what is kept
+					if (head) head = 0;   //chunk now ends here and is what is kept
 					else if (*part) lm_append(aTHX_ &rhs_removed, &rm_len, &rm_cap, part);
 					if (end) break;
 					part = q + 1;
@@ -16754,7 +17600,7 @@ static bool cs_row_touches_undef(pTHX_ cs_code_ctx *c, size_t i) {
 	whichever way round the comparator sorts, as R's order() puts NaN last with
 	or without decreasing = TRUE.  Up to 0.33 it stayed in the sort, where every
 	comparison with it read as "equal" and a FATAL uninitialized warning died.*/
-	bool self_undef = FALSE;
+	bool self_undef = 0;
 	if (count) {
 		SV *res = POPs;
 		self_undef = !SvOK(res);
@@ -20184,7 +21030,7 @@ static void km_step(pTHX_ KmCurve *restrict k, NV t, NV z) {
 		which is a number where there is no answer, and 0 is a
 		plausible-looking one.*/
 		k->S = 0.0; k->events += d;
-		k->var_undefined = TRUE;
+		k->var_undefined = 1;
 	}
 	av_push(k->t,  newSVnv(t));
 	av_push(k->nr, newSVuv((UV)nr));
@@ -20217,7 +21063,7 @@ static void km_step(pTHX_ KmCurve *restrict k, NV t, NV z) {
 		}
 	} else if (k->median_on_half && k->S < k->median_S) {
 		k->median = (k->median + t) / 2.0;
-		k->median_on_half = FALSE;
+		k->median_on_half = 0;
 	}
 	k->at_risk -= k->block;
 	k->d = k->c = k->block = 0;
@@ -22512,7 +23358,7 @@ _df_shape(...)
 		//the Perl took any other reference as a hash, and %$df died on a non-hash
 		if (SvTYPE(SvRV(df)) != SVt_PVHV) croak("Not a HASH reference");
 		HV *hv = (HV *)SvRV(df);
-		bool saw_arr = FALSE, saw_hash = FALSE;
+		bool saw_arr = FALSE, saw_hash = 0;
 		HE *he;
 		ITER_KEEP_BEGIN(hv);
 		hv_iterinit(hv);
@@ -22520,8 +23366,8 @@ _df_shape(...)
 			SV *v = he_val(aTHX_ hv, he);
 			//he_val() runs get magic only for a magical hash; a plain one can still hold a tied value
 			if (!SvRMAGICAL(hv)) SvGETMAGIC(v);
-			if (ref_named(aTHX_ v, SVt_PVAV, "ARRAY"))     saw_arr  = TRUE;
-			else if (ref_named(aTHX_ v, SVt_PVHV, "HASH")) saw_hash = TRUE;
+			if (ref_named(aTHX_ v, SVt_PVAV, "ARRAY"))     saw_arr  = 1;
+			else if (ref_named(aTHX_ v, SVt_PVHV, "HASH")) saw_hash = 1;
 			if (saw_arr && saw_hash) {
 				hv_walk_out(aTHX_ hv);
 				croak("%s: hashref mixes array and hash values (ambiguous HoA/HoH)\n", who);
@@ -23720,11 +24566,11 @@ PPCODE:
 			'18446744073709551615' wrapped to -1 and sorted by the last column,
 			and '9223372036854775808' to a negative index; on a 32-bit perl
 			'4294967295' did the same.*/
-			bool too_big = FALSE;
+			bool too_big = 0;
 			for (; p < collen; p++) {
 				if (colname[p] < '0' || colname[p] > '9') break;
 				const IV d = colname[p] - '0';
-				if (v > (IV)((SSize_t_MAX - d) / 10)) too_big = TRUE;
+				if (v > (IV)((SSize_t_MAX - d) / 10)) too_big = 1;
 				else v = v * 10 + d;
 			}
 			if (p != collen)
@@ -24934,7 +25780,7 @@ SV *oneway_test(...)
 		HV          *in_hv = NULL, *ret_hv;
 		AV          *in_av = NULL;
 		AV          *names;	//one key SV per group, in group order: SVs, so a UTF-8 label stays UTF-8
-		bool         var_equal = FALSE;
+		bool         var_equal = 0;
 		SV          *formula_sv = NULL;
 		NV          *flat = NULL;
 		size_t      *sizes = NULL;
@@ -25285,10 +26131,10 @@ CODE:
 		if (use_exact) {
 			Newx(z, N + 1, bool);
 			SAVEFREEPV(z);
-			z[0] = FALSE;
-			z[N] = TRUE;
+			z[0] = 0;
+			z[N] = 1;
 		}
-		bool has_ties = FALSE, any_step = FALSE;	//any_step: two pooled values differ somewhere
+		bool has_ties = FALSE, any_step = 0;	//any_step: two pooled values differ somewhere
 		{
 			size_t a = 0, b = 0;
 			NV prev = 0.0;
@@ -25297,7 +26143,7 @@ CODE:
 				             ? x_data[a++] : y_data[b++];
 				if (k > 0) {
 					const bool step = cBOOL(v != prev);
-					if (step) any_step = TRUE; else has_ties = TRUE;
+					if (step) any_step = 1; else has_ties = 1;
 					if (z) z[k] = step;
 					else if (has_ties) break;	//asymptotic: only whether there are ties matters
 				}
@@ -25335,9 +26181,9 @@ CODE:
 		nv_sort(x_data, valid_nx);	//NaN already dropped above
 		/*R: TIES <- length(unique(x)) < n, which warns whichever path runs and
 		keeps the automatic choice off the exact one.*/
-		bool ties = FALSE;
+		bool ties = 0;
 		for (size_t i = 1; i < valid_nx; i++)
-			if (x_data[i] == x_data[i - 1]) { ties = TRUE; break; }
+			if (x_data[i] == x_data[i - 1]) { ties = 1; break; }
 		if (ties) warn("ks_test: ties should not be present for the one-sample Kolmogorov-Smirnov test");
 		NV max_d = 0.0, max_d_plus = 0.0, max_d_minus = 0.0;
 		for (size_t i = 0; i < valid_nx; i++) {
@@ -26636,210 +27482,81 @@ PPCODE:
 			usage_croak(aTHX_ "write_table", "'col_names' must be an ARRAY reference");
 		}
 	}
-/* The worksheet name, checked as openpyxl 3.1.5 checks one (the title setter in
-  openpyxl/workbook/child.py): an empty name, or one holding any of \ * ? : / [ ],
-  is refused, and one longer than 31 characters is warned about -- "Some
-  applications may not be able to read the file", Excel first among them.  It
-  is checked before the file is opened, so a refused call leaves an existing file
+/* A hash whose values are data frames is a workbook, written as one worksheet
+  per key (wt_is_book()).  Only an .xlsx file holds more than one table, and a
+  workbook's keys name its worksheets, which leaves xlsx_sheet nothing to name.*/
+	const bool book = SvTYPE(data_ref) == SVt_PVHV && wt_is_book(aTHX_ (HV*)data_ref);
+	if (book && !xlsx)
+		croak("write_table: 'data' is a hash of data frames, which is written as a workbook "
+			"of one worksheet per key, and only to an .xlsx file, which '%s' is not\n", file);
+	if (book && xlsx_sheet_sv)
+		usage_croak(aTHX_ "write_table", "'xlsx_sheet' names the worksheet of a single table; "
+			"a workbook's worksheets are named by the keys of 'data'");
+/* The worksheet names, as UTF-8 copies in the order they are written: a
+  workbook's keys, sorted as a HoH's rows are, or else xlsx_sheet.  Each is
+  checked before the file is opened, so a refused call leaves an existing file
   intact, and read as UTF-8 from a copy: the bytes of a Latin-1 name used to go
   into workbook.xml as they were, which is not UTF-8.*/
-	SV *sheet_name = NULL;
-	bool sheet_long = 0;	// warned about at the end, with the other warnings
-	if (xlsx) {
-		sheet_name = sv_2mortal(xlsx_sheet_sv ? newSVsv(xlsx_sheet_sv) : newSVpvs("Sheet1"));
-		STRLEN snl;
-		const char *sn = SvPVutf8(sheet_name, snl);
-		if (snl == 0) usage_croak(aTHX_ "write_table", "'xlsx_sheet' must have at least one character");
-		for (STRLEN i = 0; i < snl; i++)
-			if (sn[i] && strchr("\\*?:/[]", sn[i]))
-				usage_croak(aTHX_ "write_table", "'xlsx_sheet' may not contain '%c'", sn[i]);
-		if (utf8_length((const U8*)sn, (const U8*)sn + snl) > 31) sheet_long = 1;
-	}
-	bool is_hoh = 0, is_hoa = 0, is_aoh = 0, is_flat_hash = 0, is_aoa = 0;
-/* {} or []: no rows, so no shape to find either.  It used to return before a
-  file was opened, writing nothing and saying nothing, so a script that went on
-  to read the file found it missing.  It is now a table with no rows: its header
-  is whatever col_names and row_names give, as pandas writes ",A\n" for
-  DataFrame({"A": []}).to_csv() (tests/io/formats/test_to_csv.py,
-  test_empty_dataframe), and a lone empty record for no columns at all. */
-	bool is_empty = 0;
-	bool rn_named = 0; // HoH only: row_names is a name for the key column, not a flag
-	AV *rows_av = NULL; // HoH: its row keys, mortal
-/* Validate Input Structures & Homogeneity.  A value is read through wt_got(),
-  which runs its get magic: hv_iterval() and av_fetch() hand back a proxy with no
-  value yet for a tied hash or array.  hv_iterinit()'s key count is not relied on
-  for the same reason -- a tied hash reports 0 there, whatever it holds. */
-	if (SvTYPE(data_ref) == SVt_PVHV) {
+	AV *names = NULL;	// .xlsx only
+	AV *long_names = NULL;	// those over 31 characters, warned about at the end, with the other warnings
+	if (book) {
 		HV *hv = (HV*)data_ref;
+		names = (AV*)sv_2mortal((SV*)newAV());
 		ITER_KEEP_BEGIN(hv);
 		hv_iterinit(hv);
-		HE *entry = hv_iternext(hv);
-		if (!entry) {
-			is_empty = 1;
-			ITER_KEEP_END;	// one END on each branch: the else needs the entry
+		for (HE *e; (e = hv_iternext(hv)) != NULL; ) {
+			ENTER; SAVETMPS;	// hv_iterkeysv()'s mortal copy, freed once it is copied
+			av_push(names, newSVsv(hv_iterkeysv(e)));
+			FREETMPS; LEAVE;
 		}
-		else {
-			SV *first_val = wt_got(aTHX_ hv_iterval(hv, entry));
-			ITER_KEEP_END;
-			if (!first_val) {
-				croak("write_table: Invalid hash entry\n");
+		ITER_KEEP_END;
+		const size_t n = (size_t)(av_len(names) + 1);
+		if (n > XLSX_MAX_SHEETS)
+			croak("write_table: 'data' has %" UVuf " keys, more than the %" UVuf " worksheets "
+				"an .xlsx file without ZIP64 can hold\n", (UV)n, (UV)XLSX_MAX_SHEETS);
+		sortsv(AvARRAY(names), n, Perl_sv_cmp);
+	} else if (xlsx) {
+		names = (AV*)sv_2mortal((SV*)newAV());
+		av_push(names, xlsx_sheet_sv ? newSVsv(xlsx_sheet_sv) : newSVpvs("Sheet1"));
+	}
+	if (names) {
+		for (SSize_t i = 0; i <= av_len(names); i++) {
+			SV *name = AvARRAY(names)[i];
+			(void)SvPVutf8_nolen(name);	// upgraded in place: the copy is this call's own
+			if (wt_sheet_name_check(aTHX_ name, book)) {
+				if (!long_names) long_names = (AV*)sv_2mortal((SV*)newAV());
+				av_push(long_names, SvREFCNT_inc_simple_NN(name));
 			}
-// Check if top level values are scalars (Flat Hash)
-			if (!SvROK(first_val)) {
-				is_flat_hash = 1;
-			} else {
-				int first_type = SvTYPE(SvRV(first_val));
-				if (first_type != SVt_PVHV && first_type != SVt_PVAV) {
-					croak("write_table: Data values must be either all HASHes, all ARRAYs, or all scalars\n");
-				}
-				is_hoh = (first_type == SVt_PVHV);
-				is_hoa = (first_type == SVt_PVAV);
-			}
-			ITER_KEEP_BEGIN(hv);
-			hv_iterinit(hv);
-			while ((entry = hv_iternext(hv))) {
-				SV *val = wt_got(aTHX_ hv_iterval(hv, entry));
-				if (is_flat_hash) {
-					if (val && SvROK(val)) {
-						croak("write_table: Mixed data types detected. Ensure all values are scalars for a flat hash.\n");
-					}
-				} else {
-					if (!val || !SvROK(val) || SvTYPE(SvRV(val)) != (is_hoh ? SVt_PVHV : SVt_PVAV)) {
-						croak("write_table: Mixed data types detected. Ensure all values are %s references.\n", is_hoh ? "HASH" : "ARRAY");
-					}
-				}
-			}
-			ITER_KEEP_END;
-			if (is_hoh) { // Rows are only explicitly pre-gathered for HOH
-/* A non-numeric row_names names the key column. It is refused when that name
-  is also a column being written -- in col_names if that was given, otherwise
-  a key of any inner hash -- since the file would then hold two columns of
-  that name, which read_table() cannot tell apart. Checked here, before the
-  output file is opened, so a refused call leaves an existing file intact.*/
-				rn_named = rn_name != NULL;
-				if (rn_named) {
-					bool clash = 0;
-					if (col_names_sv && SvOK(col_names_sv)) {
-						AV *c_av = (AV*)SvRV(col_names_sv);
-						for (SSize_t i = 0; !clash && i <= av_len(c_av); i++) {
-							SV **c = av_fetch(c_av, i, 0);
-							if (c && SvOK(*c) && sv_eq(*c, row_names_sv)) clash = 1;
-						}
-					} else {
-						ITER_KEEP_BEGIN(hv);
-						hv_iterinit(hv);
-						while (!clash && (entry = hv_iternext(hv))) {
-							if (hv_exists_ent((HV*)SvRV(wt_got(aTHX_ hv_iterval(hv, entry))), row_names_sv, 0)) clash = 1;
-						}
-						ITER_KEEP_END;
-					}
-					if (clash)
-						croak("write_table: row_names '%" SVf "' collides with an existing column\n", SVfARG(row_names_sv));
-				}
-/* hv_iterkeysv() makes a mortal copy of each key, which nothing frees until the
-  call returns; the scope frees each one as soon as it is copied. */
-				rows_av = (AV*)sv_2mortal((SV*)newAV());
-				ITER_KEEP_BEGIN(hv);
-				hv_iterinit(hv);
-				while ((entry = hv_iternext(hv))) {
-					ENTER; SAVETMPS;
-					av_push(rows_av, newSVsv(hv_iterkeysv(entry)));
-					FREETMPS; LEAVE;
-				}
-				ITER_KEEP_END;
-			}
+		}
+		wt_sheet_names_distinct(aTHX_ names);
+	}
+/* The tables to write: the one in 'data', or a workbook's, one per worksheet. */
+	const size_t n_frames = book ? (size_t)(av_len(names) + 1) : 1;
+	WtFrame *frames;
+	Newxz(frames, n_frames, WtFrame);
+	SAVEFREEPV(frames);
+	if (book) {
+		for (size_t i = 0; i < n_frames; i++) {
+			SV *name = AvARRAY(names)[i];
+			HE *he = hv_fetch_ent((HV*)data_ref, name, 0, 0);
+			SV *v = frame_untied(aTHX_ wt_got(aTHX_ HeVAL(he)), 0);	// a key just read from the hash: it is there
+			frames[i].data_ref = SvRV(v);
+			frames[i].who = sv_2mortal(newSVpvf("write_table: sheet '%" SVf "'", SVfARG(name)));
 		}
 	} else {
-		AV *av = (AV*)data_ref;
-		if (av_len(av) < 0) is_empty = 1;
-		else {
-			SV **first_ptr = av_fetch(av, 0, 0);
-			SV *first = first_ptr ? wt_got(aTHX_ *first_ptr) : NULL;
-			if (first && SvROK(first) && SvTYPE(SvRV(first)) == SVt_PVAV) {
-// Array of Arrays: every element must be an ARRAY reference.
-				for (SSize_t i = 0; i <= av_len(av); i++) {
-					SV **ptr = av_fetch(av, i, 0);
-					SV *e = ptr ? wt_got(aTHX_ *ptr) : NULL;
-					if (!e || !SvROK(e) || SvTYPE(SvRV(e)) != SVt_PVAV) {
-						croak("write_table: Mixed data types detected in Array of Arrays. All elements must be ARRAY references.\n");
-					}
-				}
-				is_aoa = 1;
-			} else {
-				if (!first || !SvROK(first) || SvTYPE(SvRV(first)) != SVt_PVHV) {
-					if (first && SvROK(first))
-						croak("write_table: For ARRAY data, every element must be a HASH reference "
-							  "(Array of Hashes) or all ARRAY references (Array of Arrays); element 0 is a reference of type '%s'\n",
-							  sv_reftype(SvRV(first), 0));
-					else if (first && SvOK(first))
-						croak("write_table: For ARRAY data, every element must be a HASH reference "
-							  "(Array of Hashes) or all ARRAY references (Array of Arrays); element 0 is a non-reference scalar (value: '%s')\n",
-							  SvPV_nolen(first));
-					else
-						croak("write_table: For ARRAY data, every element must be a HASH reference "
-							  "(Array of Hashes) or all ARRAY references (Array of Arrays); element 0 is undef\n");
-				}
-				for (SSize_t i = 0; i <= av_len(av); i++) {
-					SV **ptr = av_fetch(av, i, 0);
-					SV *e = ptr ? wt_got(aTHX_ *ptr) : NULL;
-					if (!e || !SvROK(e) || SvTYPE(SvRV(e)) != SVt_PVHV) {
-						croak("write_table: Mixed data types detected in Array of Hashes. All elements must be HASH references.\n");
-					}
-				}
-				is_aoh = 1;
-			}
-		}
+		frames[0].data_ref = data_ref;
+		frames[0].who = sv_2mortal(newSVpvs("write_table"));
 	}
-/* A HoA takes its columns and its row count from the arrays col_names names,
-  so a col_names naming none leaves it with neither.  That is refused here,
-  before the output file is opened: it used to be refused after, which had
-  already emptied any existing file of that name. */
-	if (is_hoa && col_names_sv && SvOK(col_names_sv) && !wt_col_names_any(aTHX_ col_names_sv))
-		croak("write_table: Could not get headers: 'col_names' names no column\n");
-/* A HoA's row_names => 'col' takes its labels from the array 'col', and one
-  the hash does not have used to give every row an empty label without a
-  word.  Refused here, before the file is opened. */
-	if (is_hoa && rn_name && !hv_exists_ent((HV*)data_ref, row_names_sv, 0))
-		croak("write_table: row_names '%" SVf "' names no column of the hash of arrays\n",
-			SVfARG(row_names_sv));
-/* An AoA and a flat hash have no column to take labels from, so a name heads
-  their 1..n label column, as it heads a HoH's key column; it used to be
-  ignored, leaving that header cell empty.  As for a HoH, it is refused when a
-  column being written already has the name -- in col_names if given, else the
-  AoA's header row or the flat hash's keys -- since read_table() could not
-  tell the two apart. */
-	if ((is_aoa || is_flat_hash) && rn_name) {
-		bool clash = 0;
-		AV *names = NULL;	// the header row the name is compared with; NULL for a flat hash's keys
-		if (col_names_sv && SvOK(col_names_sv)) names = (AV*)SvRV(col_names_sv);
-		else if (is_aoa) {	// row 0 was checked to be an ARRAY reference above
-			SV **h0 = av_fetch((AV*)data_ref, 0, 0);
-			if (h0) names = (AV*)SvRV(wt_got(aTHX_ *h0));
-		}
-		if (names) {
-			for (SSize_t i = 0; !clash && i <= av_len(names); i++) {
-				SV **c = av_fetch(names, i, 0);
-				SV *cv = c ? wt_got(aTHX_ *c) : NULL;
-				if (cv && SvOK(cv) && !SvROK(cv) && sv_eq(cv, row_names_sv)) clash = 1;
-			}
-		} else clash = hv_exists_ent((HV*)data_ref, row_names_sv, 0);
-		if (clash)
-			croak("write_table: row_names '%" SVf "' collides with an existing column\n", SVfARG(row_names_sv));
-	}
-/* An .xlsx worksheet holds 1048576 rows, header included (XLSX_MAX_ROWS).
-  Every shape but a HoA knows its row count already, and a table past it is
-  refused here, before the file is opened; a HoA's is the longest of the
-  arrays it writes, and is counted as the rows go out, in wt_xlsx_row(). */
-	if (xlsx) {
-		size_t rows = 0;	// header included; 0 = not known yet (a HoA, or no rows)
-		if (is_aoa)
-			rows = (size_t)(av_len((AV*)data_ref) + 1) + (col_names_sv && SvOK(col_names_sv) ? 1 : 0);
-		else if (is_aoh) rows = (size_t)(av_len((AV*)data_ref) + 1) + 1;
-		else if (is_hoh) rows = (size_t)(av_len(rows_av) + 1) + 1;
-		if (rows > XLSX_MAX_ROWS)
-			croak("write_table: '%s' would have more than the %" UVuf " rows an Excel "
-				"worksheet holds, header included\n", file, (UV)XLSX_MAX_ROWS);
-	}
+	WtOpts O;
+	O.col_names_sv = col_names_sv;
+	O.row_names_sv = row_names_sv;
+	O.rn_name = rn_name;
+	O.rn_name_len = rn_name_len;
+	O.undef_val = undef_val;
+	O.undef_len = undef_len;
+	O.file = file;
+	O.xlsx = xlsx;
+	for (size_t i = 0; i < n_frames; i++) wt_frame_shape(aTHX_ &frames[i], &O);
 /* The one output handle write_table() holds open at a time -- the delimited
   file, or the .xlsx archive -- lives in *fhp, which the save stack closes if
   anything below croaks.  Everything else below is mortal or on the save stack
@@ -26872,8 +27589,7 @@ PPCODE:
 		} else if (comment_kind == 1) {
 			SV_CATLIT(prov, "\n"); sv_catsv(prov, xlsx_comment);
 		}
-		wt_xlsx_begin(aTHX_ &X, fhp, file, sheet_name, prov,
-			(size_t)xlsx_freeze_rows, (size_t)xlsx_freeze_cols);	// bounded when read
+		wt_xlsx_begin(aTHX_ &X, fhp, file, names, prov);
 		S.xlsx = &X;
 	} else if (collect) {
 		collect_av = (AV*)sv_2mortal((SV*)newAV());
@@ -26911,352 +27627,11 @@ PPCODE:
 			croak("write_table: could not write '%s' compressed: %" SVf "\n",
 				file, SVfARG(err));
 	}
-	AV *headers_av = (AV*)sv_2mortal((SV*)newAV());
-/* row_names is off unless asked for, in every format -- delimited, LaTeX and
-  .xlsx alike -- for every shape but a HoH. R's write.table() defaults it on,
-  and this used to follow suit, but a label column nobody asked for is the
-  wrong default here: the common case is a frame whose rows are already
-  identified by one of its own columns, and the leading empty header cell it
-  produces (",gene,n") is a well known nuisance to read back. row_names => 1
-  opts in and gives the old behaviour; row_names => 'col' uses that column's
-  values as the labels, and names the label column 'col'.
-  A HoH is the exception, and defaults it on: its outer keys are the only place
-  the row identifiers exist, not a 1..n index, so leaving them out silently
-  discards a column of data (an NCBI taxid-keyed HoH came out with no taxids).
-  There row_names => 'name' writes 'name' as the label column's header instead
-  of an empty cell, and row_names => 0 still turns the keys off.*/
-	bool inc_rownames = row_names_sv ? (SvTRUE(row_names_sv) ? TRUE : FALSE) : is_hoh;
-/* A HoA's or AoH's row_names => 'col' takes the labels from column 'col', and
-  the label column is headed 'col': the header cell used to be left empty, so
-  the column's name was lost and read_table() read it back as row_name.  pandas
-  writes an index's name over it the same way ("x,data\n1.0,1\n",
-  tests/io/formats/test_to_csv.py, test_to_csv_single_level_multi_index). */
-	const char *rownames_col = NULL;
-	STRLEN rownames_len = 0;
-	size_t n_unnamed = 0;	// data columns whose header cell is empty, set by wt_emit_header()
-	size_t first_unnamed = 0;	// 1-based file column of the first of them; 0 = none
-	size_t n_long = 0;	// AoA data rows longer than the header, for the warning at the end
-	size_t n_no_label = 0;	// AoH rows with no row_names column, for the warning at the end
-	size_t first_long = 0, first_long_width = 0, header_width = 0;	// the first of them, its cells, the header's
-	if (is_hoh) {// ----- Hash of Hashes -----
-		if (col_names_sv && SvOK(col_names_sv)) {
-			wt_headers_given(aTHX_ headers_av, col_names_sv, FALSE);
-		} else {
-			HV *col_map = (HV*)sv_2mortal((SV*)newHV());
-			ITER_KEEP_BEGIN((HV*)data_ref);
-			hv_iterinit((HV*)data_ref);
-			HE *entry;
-			while ((entry = hv_iternext((HV*)data_ref))) {
-				HV *inner = (HV*)SvRV(wt_got(aTHX_ hv_iterval((HV*)data_ref, entry)));
-/* The keys of a tied or UTF-8 row are taken through mortal SVs, and nothing
-  frees a mortal until the call returns: one SV per cell of the table, 212 MB
-  over the data's own for a 200000 x 20 HoH, when every key went that way.
-  The scope frees them a row at a time, and the lvalue fetch in
-  wt_collect_keys() makes a column's entry only when it is new. */
-				ENTER; SAVETMPS;
-				wt_collect_keys(aTHX_ col_map, inner);
-				FREETMPS; LEAVE;
-			}
-			ITER_KEEP_END;
-			hv_iterinit(col_map);
-			HE *ce;
-			while ((ce = hv_iternext(col_map)))
-				av_push(headers_av, newSVsv(hv_iterkeysv(ce)));
-			const size_t num_cols = (size_t)(av_len(headers_av) + 1);
-			if (num_cols > 1)
-				sortsv(AvARRAY(headers_av), num_cols, Perl_sv_cmp);
-		}
-// NULL = no key column, "" = unnamed, else the name checked above
-		const char *rn_header = !inc_rownames ? NULL : rn_named ? rn_name : "";
-		const size_t num_headers = wt_emit_header(aTHX_ &S, headers_av, rn_header,
-			rn_header == rn_name ? rn_name_len : 0, &n_unnamed, &first_unnamed);
-		const size_t num_rows = (size_t)(av_len(rows_av) + 1);
-		sortsv(AvARRAY(rows_av), num_rows, Perl_sv_cmp);
-		HV *data_hv = (HV*)data_ref;
-		WtRow R;
-		wt_row_init(aTHX_ &R, num_headers + 1);
-		for (size_t i = 0; i < num_rows; i++) {
-			ENTER; SAVETMPS;	// a tied row's proxies, freed a row at a time
-			R.n = 0;
-			SV *row_key_sv = AvARRAY(rows_av)[i];	//av_push()ed by the HoH scan: no holes
-			if (inc_rownames) {
-				STRLEN key_len;
-				const char *ks = SvPV(row_key_sv, key_len);
-				wt_field(&R, ks, key_len);
-			}
-			HE *inner_he = hv_fetch_ent(data_hv, row_key_sv, 0, 0);
-			SV *inner_sv = inner_he ? wt_got(aTHX_ HeVAL(inner_he)) : NULL;
-			HV *inner_hv = (inner_sv && SvROK(inner_sv)) ? (HV*)SvRV(inner_sv) : NULL;
-			for (size_t j = 0; j < num_headers; j++) {
-				SV **h_ptr = av_fetch(headers_av, (SSize_t)j, 0);
-				SV *h_sv = (h_ptr && SvOK(*h_ptr)) ? *h_ptr : NULL;
-				// FIX (UTF-8/NUL safety): fetch by SV, not by raw bytes
-				HE *cell_he = (inner_hv && h_sv) ? wt_fetch(aTHX_ inner_hv, h_sv) : NULL;
-				wt_cell(aTHX_ &R, cell_he ? HeVAL(cell_he) : NULL, undef_val, undef_len);
-			}
-			print_string_row(aTHX_ &S, &R);
-			FREETMPS; LEAVE;
-		}
-	} else if (is_flat_hash) {// Flat Hash
-		HV *data_hv = (HV*)data_ref;
-		if (col_names_sv && SvOK(col_names_sv)) {
-			wt_headers_given(aTHX_ headers_av, col_names_sv, FALSE);
-		} else {
-/* UTF-8 safety: keep the key SVs (flags intact) and sort
-  them with sv_cmp instead of round-tripping through char*.*/
-			ITER_KEEP_BEGIN(data_hv);
-			hv_iterinit(data_hv);
-			HE *ce;
-			while ((ce = hv_iternext(data_hv)))
-				av_push(headers_av, newSVsv(hv_iterkeysv(ce)));
-			ITER_KEEP_END;
-			const size_t num_cols = (size_t)(av_len(headers_av) + 1);
-			if (num_cols > 1)
-				sortsv(AvARRAY(headers_av), num_cols, Perl_sv_cmp);
-		}
-		const size_t num_headers = wt_emit_header(aTHX_ &S, headers_av,
-			!inc_rownames ? NULL : rn_name ? rn_name : "", rn_name ? rn_name_len : 0,	// a name heads the 1..n labels
-			&n_unnamed, &first_unnamed);
-		WtRow R;
-		wt_row_init(aTHX_ &R, num_headers + 1);
-// Give the single row a default numeric identifier if row names are on
-		if (inc_rownames) wt_field(&R, "1", 1);
-		for (size_t j = 0; j < num_headers; j++) {
-			SV **h_ptr = av_fetch(headers_av, (SSize_t)j, 0);
-			SV *h_sv = (h_ptr && SvOK(*h_ptr)) ? *h_ptr : NULL;
-			HE *val_he = h_sv ? wt_fetch(aTHX_ data_hv, h_sv) : NULL;
-			wt_cell(aTHX_ &R, val_he ? HeVAL(val_he) : NULL, undef_val, undef_len);
-		}
-		print_string_row(aTHX_ &S, &R);
-	} else if (is_hoa) {// Hash of Arrays
-		HV *data_hv = (HV*)data_ref;
-		if (col_names_sv && SvOK(col_names_sv)) {
-			wt_headers_given(aTHX_ headers_av, col_names_sv, FALSE);
-		} else {
-			ITER_KEEP_BEGIN(data_hv);
-			hv_iterinit(data_hv);
-			HE *ce;
-			while ((ce = hv_iternext(data_hv)))
-				av_push(headers_av, newSVsv(hv_iterkeysv(ce)));
-			ITER_KEEP_END;
-			const size_t num_cols = (size_t)(av_len(headers_av) + 1);
-			if (num_cols > 1)
-				sortsv(AvARRAY(headers_av), num_cols, Perl_sv_cmp);
-		}
-		if (inc_rownames && rn_name) {
-			rownames_col = rn_name;
-			rownames_len = rn_name_len;
-			AV *filtered_headers = (AV*)sv_2mortal((SV*)newAV());
-			for (SSize_t i = 0; i <= av_len(headers_av); i++) {
-				SV **h_ptr = av_fetch(headers_av, i, 0);
-				if (!h_ptr || !*h_ptr) continue;
-				SV *h_sv = *h_ptr;
-				if (!sv_eq(h_sv, row_names_sv)) {
-					av_push(filtered_headers, newSVsv(h_sv));
-				}
-			}
-			headers_av = filtered_headers;
-		}
-		const size_t num_headers = wt_emit_header(aTHX_ &S, headers_av,
-			!inc_rownames ? NULL : rownames_col ? rownames_col : "", rownames_len,
-			&n_unnamed, &first_unnamed);
-/* Each column's array is looked up once, not once per cell: on a 200000 x 20
-  HoA that was 4 million hash lookups, and the table went from 0.209s to 0.155s
-  without them.  The row count is the longest of the arrays actually written --
-  those columns and the label column -- where it used to be the longest in the
-  hash, so a col_names leaving out a longer array wrote rows of nothing but
-  separators after the data ran out. */
-		AV **col_avs;
-		Newx(col_avs, num_headers ? num_headers : 1, AV *);
-		SAVEFREEPV(col_avs);
-		size_t max_rows = 0;
-		for (size_t j = 0; j < num_headers; j++) {
-			SV **h_ptr = av_fetch(headers_av, (SSize_t)j, 0);
-			SV *h_sv = (h_ptr && SvOK(*h_ptr)) ? *h_ptr : NULL;
-			HE *arr_he = h_sv ? wt_fetch(aTHX_ data_hv, h_sv) : NULL;
-			SV *arr_sv = arr_he ? wt_got(aTHX_ HeVAL(arr_he)) : NULL;
-			col_avs[j] = (arr_sv && SvROK(arr_sv)) ? (AV*)SvRV(arr_sv) : NULL;
-			const size_t len = col_avs[j] ? (size_t)(av_len(col_avs[j]) + 1) : 0;
-			if (len > max_rows) max_rows = len;
-		}
-		AV *rn_av = NULL;	// the label column's array, when row_names names one
-		if (rownames_col) {
-			HE *rn_he = hv_fetch_ent(data_hv, row_names_sv, 0, 0);
-			SV *rn_sv = rn_he ? wt_got(aTHX_ HeVAL(rn_he)) : NULL;
-			rn_av = (rn_sv && SvROK(rn_sv)) ? (AV*)SvRV(rn_sv) : NULL;
-			const size_t len = rn_av ? (size_t)(av_len(rn_av) + 1) : 0;
-			if (len > max_rows) max_rows = len;
-		}
-		WtRow R;
-		wt_row_init(aTHX_ &R, num_headers + 1);
-		char rn_buf[TYPE_DIGITS(UV) + 1];
-		for (size_t i = 0; i < max_rows; i++) {
-			ENTER; SAVETMPS;	// a tied column's proxies, freed a row at a time
-			R.n = 0;
-			if (inc_rownames) {
-				if (rownames_col) {
-					SV **rn_val_ptr = rn_av ? av_fetch(rn_av, (SSize_t)i, 0) : NULL;
-					wt_cell(aTHX_ &R, rn_val_ptr ? *rn_val_ptr : NULL, undef_val, undef_len);
-				} else {
-					const int k = my_snprintf(rn_buf, sizeof(rn_buf), "%" UVuf, (UV)(i + 1));
-					wt_field(&R, rn_buf, (STRLEN)k);
-				}
-			}
-			for (size_t j = 0; j < num_headers; j++) {
-				SV **cell_ptr = col_avs[j] ? av_fetch(col_avs[j], (SSize_t)i, 0) : NULL;
-				wt_cell(aTHX_ &R, cell_ptr ? *cell_ptr : NULL, undef_val, undef_len);
-			}
-			print_string_row(aTHX_ &S, &R);
-			FREETMPS; LEAVE;
-		}
-	} else if (is_aoh) { // Array of Hashes
-		AV *data_av = (AV*)data_ref;
-		size_t num_rows = (size_t)(av_len(data_av) + 1);
-		if (col_names_sv && SvOK(col_names_sv)) {
-			wt_headers_given(aTHX_ headers_av, col_names_sv, FALSE);
-		} else {
-			HV *col_map = (HV*)sv_2mortal((SV*)newHV());
-			for (size_t i = 0; i < num_rows; i++) {
-				ENTER; SAVETMPS;	// the key copies wt_collect_keys() can make: see the HoH branch
-				SV **row_ptr = av_fetch(data_av, (SSize_t)i, 0);
-				SV *row_sv = row_ptr ? wt_got(aTHX_ *row_ptr) : NULL;
-				if (row_sv && SvROK(row_sv))
-					wt_collect_keys(aTHX_ col_map, (HV*)SvRV(row_sv));
-				FREETMPS; LEAVE;
-			}
-/* UTF-8 safety: keep the key SVs (flags intact) and sort
-  them with sv_cmp instead of round-tripping through char*.*/
-			hv_iterinit(col_map);
-			HE *ce;
-			while ((ce = hv_iternext(col_map)))
-				av_push(headers_av, newSVsv(hv_iterkeysv(ce)));
-			const size_t num_cols = (size_t)(av_len(headers_av) + 1);
-			if (num_cols > 1)
-				sortsv(AvARRAY(headers_av), num_cols, Perl_sv_cmp);
-		}
-		if (inc_rownames && rn_name) {
-			rownames_col = rn_name;
-			rownames_len = rn_name_len;
-			AV *filtered_headers = (AV*)sv_2mortal((SV*)newAV());
-			for (SSize_t i = 0; i <= av_len(headers_av); i++) {
-				SV **h_ptr = av_fetch(headers_av, i, 0);
-				if (!h_ptr || !*h_ptr) continue;
-				SV *h_sv = *h_ptr;
-				if (!sv_eq(h_sv, row_names_sv)) {
-					av_push(filtered_headers, newSVsv(h_sv));
-				}
-			}
-			headers_av = filtered_headers;
-		}
-		const size_t num_headers = wt_emit_header(aTHX_ &S, headers_av,
-			!inc_rownames ? NULL : rownames_col ? rownames_col : "", rownames_len,
-			&n_unnamed, &first_unnamed);
-		WtRow R;
-		wt_row_init(aTHX_ &R, num_headers + 1);
-		char rn_buf[TYPE_DIGITS(UV) + 1];
-		for (size_t i = 0; i < num_rows; i++) {
-			ENTER; SAVETMPS;	// a tied row's proxies, freed a row at a time
-			R.n = 0;
-			SV **row_ptr = av_fetch(data_av, (SSize_t)i, 0);
-			SV *row_sv = row_ptr ? wt_got(aTHX_ *row_ptr) : NULL;
-			HV *row_hv = (row_sv && SvROK(row_sv)) ? (HV*)SvRV(row_sv) : NULL;
-			if (inc_rownames) {
-				if (rownames_col) {
-					HE *rn_he = row_hv ? wt_fetch(aTHX_ row_hv, row_names_sv) : NULL;
-					if (!rn_he) n_no_label++;
-					wt_cell(aTHX_ &R, rn_he ? HeVAL(rn_he) : NULL, undef_val, undef_len);
-				} else {
-					const int k = my_snprintf(rn_buf, sizeof(rn_buf), "%" UVuf, (UV)(i + 1));
-					wt_field(&R, rn_buf, (STRLEN)k);
-				}
-			}
-			for (size_t j = 0; j < num_headers; j++) {
-				SV **h_ptr = av_fetch(headers_av, (SSize_t)j, 0);
-				SV *h_sv = (h_ptr && SvOK(*h_ptr)) ? *h_ptr : NULL;
-				HE *cell_he = (row_hv && h_sv) ? wt_fetch(aTHX_ row_hv, h_sv) : NULL;
-				wt_cell(aTHX_ &R, cell_he ? HeVAL(cell_he) : NULL, undef_val, undef_len);
-			}
-			print_string_row(aTHX_ &S, &R);
-			FREETMPS; LEAVE;
-		}
-	} else if (is_aoa) {// ----- Array of Arrays
-		AV *data_av = (AV*)data_ref;
-		SSize_t last = av_len(data_av);   // index of last element
-		SSize_t data_start = 0;            // first data-row index
-/* Headers: explicit col_names, else the first inner array (which is
-  then consumed as the header rather than emitted as data).*/
-		if (col_names_sv && SvOK(col_names_sv)) {
-			wt_headers_given(aTHX_ headers_av, col_names_sv, TRUE);	// positional: an undef keeps its column
-		} else {
-			SV **h0 = av_fetch(data_av, 0, 0);
-			SV *h0_sv = h0 ? wt_got(aTHX_ *h0) : NULL;
-			AV *h_av = (h0_sv && SvROK(h0_sv)) ? (AV*)SvRV(h0_sv) : NULL;
-			if (h_av) {
-				for (SSize_t i = 0; i <= av_len(h_av); i++) {
-					SV **c = av_fetch(h_av, i, 0);
-					SV *cv = c ? wt_got(aTHX_ *c) : NULL;
-					if (cv && SvROK(cv))	// refused as a data cell is: it was written as its address
-						croak("write_table: Cannot write nested reference types to table\n");
-					SV *copy = newSVpvs("");
-					if (cv && SvOK(cv)) sv_setsv_nomg(copy, cv);
-					av_push(headers_av, copy);
-				}
-			}
-			data_start = 1;
-		}
-/* A data row longer than the header used to lose its extra cells without a
-  word.  The header is widened to the longest row instead, with an empty cell
-  over each column it gains, which is the shape pandas gives
-  DataFrame([[1, 2], [4, 5, 6]]) (tests/io/json/test_pandas.py,
-  test_frame_from_json_missing_data, pins the padding), and R's write.table()
-  has headed every column since 2.0.1, which wrote 3 headers over 4 columns
-  (tests/reg-tests-2.R).  The rows that forced it are warned about at the end,
-  in place of the empty-header warning those cells would otherwise draw. */
-		header_width = (size_t)(av_len(headers_av) + 1);
-		size_t widest = header_width;
-		for (SSize_t r = data_start; r <= last; r++) {
-			SV **row_ptr = av_fetch(data_av, r, 0);
-			SV *row_sv = row_ptr ? wt_got(aTHX_ *row_ptr) : NULL;
-			if (!row_sv || !SvROK(row_sv)) continue;
-			const size_t w = (size_t)(av_len((AV*)SvRV(row_sv)) + 1);
-			if (w > header_width && n_long++ == 0) {
-				first_long = (size_t)(r - data_start) + 1;
-				first_long_width = w;
-			}
-			if (w > widest) widest = w;
-		}
-		for (size_t k = header_width; k < widest; k++) av_push(headers_av, newSVpvs(""));
-		const size_t num_headers = wt_emit_header(aTHX_ &S, headers_av,
-			!inc_rownames ? NULL : rn_name ? rn_name : "", rn_name ? rn_name_len : 0,	// a name heads the 1..n labels
-			&n_unnamed, &first_unnamed);
-		n_unnamed -= widest - header_width;	// the widened cells, warned about as long rows instead
-		WtRow R;
-		wt_row_init(aTHX_ &R, num_headers + 1);
-		char rn_buf[TYPE_DIGITS(UV) + 1]; // numeric row labels, printed before reuse (see HoA)
-		size_t rn = 0;	// the last row label written
-		for (SSize_t r = data_start; r <= last; r++) {
-			ENTER; SAVETMPS;	// a tied row's proxies, freed a row at a time
-			R.n = 0;
-			if (inc_rownames) {
-				const int k = my_snprintf(rn_buf, sizeof(rn_buf), "%" UVuf, (UV)++rn);
-				wt_field(&R, rn_buf, (STRLEN)k);
-			}
-			SV **row_ptr = av_fetch(data_av, r, 0);
-			SV *row_sv = row_ptr ? wt_got(aTHX_ *row_ptr) : NULL;
-			AV *row_av = (row_sv && SvROK(row_sv)) ? (AV*)SvRV(row_sv) : NULL;
-			for (size_t j = 0; j < num_headers; j++) {
-				SV **cell_ptr = row_av ? av_fetch(row_av, (SSize_t)j, 0) : NULL;
-				wt_cell(aTHX_ &R, cell_ptr ? *cell_ptr : NULL, undef_val, undef_len);
-			}
-			print_string_row(aTHX_ &S, &R);
-			FREETMPS; LEAVE;
-		}
-	} else if (is_empty) {// ----- no rows: the header alone
-		if (col_names_sv && SvOK(col_names_sv))
-			wt_headers_given(aTHX_ headers_av, col_names_sv, FALSE);
-		const char *rn_header = !inc_rownames ? NULL : rn_name ? rn_name : "";
-		(void)wt_emit_header(aTHX_ &S, headers_av, rn_header,
-			rn_header == rn_name ? rn_name_len : 0, &n_unnamed, &first_unnamed);
+	for (size_t i = 0; i < n_frames; i++) {
+		if (xlsx) wt_xlsx_sheet_begin(aTHX_ &X, frames[i].who,
+			(size_t)xlsx_freeze_rows, (size_t)xlsx_freeze_cols);	// bounded when read
+		wt_frame_write(aTHX_ &frames[i], &O, &S);
+		if (xlsx) wt_xlsx_sheet_end(aTHX_ &X, fhp);
 	}
 /* A compressed file is finished by popping the buffer (:perlio, or :crlf) and
   then the via layer while the file is still open: the layer's POPPED writes
@@ -27309,40 +27684,20 @@ PPCODE:
 			tex_longtable_head, fhp);
 		if (!quiet) write_table_announce(aTHX_ file);
 	}
-/* An empty header cell is warned about, because the file then gives that column
-  no name to address it by, and every reader invents one: read_table() says
-  row_name, pandas "Unnamed: 0". For a HoH the empty cell is the key column's,
-  and row_names => 'name' names it, so the warning says so. Every other shape
-  writes its label cell empty only when row_names => 1 asked for it -- R's own
-  layout -- and nothing can name it, so warning there could not be silenced.
-  The warnings come last, after every buffer and handle above is released,
+/* The warnings come last, after every buffer and handle above is released,
   because a __WARN__ handler may die. 'quiet' does not silence them: it is the
-  opt-out for the confirmation line, and this is a problem with the data.*/
-	if (is_hoh && inc_rownames && !rn_named)
-		warn("write_table: the row-name column (column 1) of '%s' has no name in "
-			"the header; name it with row_names => 'name', or drop it with "
-			"row_names => 0\n", file);
-	if (n_unnamed)
-		warn("write_table: %" UVuf " column%s of '%s' ha%s no name in the header "
-			"(the first is column %" UVuf ")\n", (UV)n_unnamed,
-			n_unnamed == 1 ? "" : "s", file, n_unnamed == 1 ? "s" : "ve",
-			(UV)first_unnamed);
-	if (n_long)
-		warn("write_table: %" UVuf " data row%s of '%s' ha%s more cells than the "
-			"header's %" UVuf " (the first is row %" UVuf ", with %" UVuf "); the "
-			"extra cells are written under empty header cells\n", (UV)n_long,
-			n_long == 1 ? "" : "s", file, n_long == 1 ? "s" : "ve",
-			(UV)header_width, (UV)first_long, (UV)first_long_width);
-	if (sheet_long)
-		warn("write_table: 'xlsx_sheet' is more than 31 characters, which some "
-			"applications, Excel among them, cannot read\n");
-/* An AoH row without the row_names column has no label, and is written with
-  undef_val in its place; one warning for the file, not one per row. */
-	if (n_no_label)
-		warn("write_table: %" UVuf " row%s of '%s' ha%s no '%" SVf "' (row_names); "
-			"%s label is written as undef_val\n", (UV)n_no_label,
-			n_no_label == 1 ? "" : "s", file, n_no_label == 1 ? "s" : "ve",
-			SVfARG(row_names_sv), n_no_label == 1 ? "its" : "their");
+  opt-out for the confirmation line, and these are problems with the data. */
+	for (size_t i = 0; i < n_frames; i++) wt_frame_warn(aTHX_ &frames[i], &O);
+	if (long_names) {
+		for (SSize_t i = 0; i <= av_len(long_names); i++) {
+			if (book)
+				warn("write_table: worksheet name '%" SVf "' is more than 31 characters, which "
+					"some applications, Excel among them, cannot read\n", SVfARG(AvARRAY(long_names)[i]));
+			else
+				warn("write_table: 'xlsx_sheet' is more than 31 characters, which some "
+					"applications, Excel among them, cannot read\n");
+		}
+	}
 	XSRETURN_EMPTY;
 }
 
@@ -30616,10 +30971,10 @@ SV *lmer(...)
 	{
 		SV *bad = NULL;
 		for (size_t k = 0; k < nre; k++) {
-			bool seen = FALSE;
+			bool seen = 0;
 			if (NL[k] < n) continue;
 			for (size_t k2 = 0; k2 < k; k2++)
-				if (strEQ(re_group[k2], re_group[k])) { seen = TRUE; break; }
+				if (strEQ(re_group[k2], re_group[k])) { seen = 1; break; }
 			if (seen) continue;
 			if (!bad) bad = sv_2mortal(newSVpv(re_group[k], 0));
 			else sv_catpvf(bad, ", %s", re_group[k]);
@@ -31661,8 +32016,8 @@ SV* rbinom(...)
 	//Parse named arguments
 	size_t n = 0, size = 0;
 	NV prob = 0.5;
-	bool n_set = FALSE, size_set = FALSE, prob_set = FALSE;
-	bool na = FALSE;	//a fractional size or a NaN prob: R's rbinom() gives NA for every draw
+	bool n_set = FALSE, size_set = FALSE, prob_set = 0;
+	bool na = 0;	//a fractional size or a NaN prob: R's rbinom() gives NA for every draw
 	/*Stack_off_t, the type of `items`: an unsigned short wrapped past 65535
 	arguments and the loop never ended.*/
 	for (Stack_off_t i = 0; i < items; i += 2) {
@@ -31670,13 +32025,13 @@ SV* rbinom(...)
 		SV* val = ST(i + 1);
 		if (strEQ(key, "n")) {
 			n = sv_count_arg(aTHX_ val, "rbinom", "n", 0);
-			n_set = TRUE;
+			n_set = 1;
 		} else if (strEQ(key, "size")) {
 			size = sv_count_arg(aTHX_ val, "rbinom", "size", 0);
 			/*sv_count_arg() truncates, so 2.5 drew from size 2.  R's rbinom()
 			refuses a size that is not a whole number with NA.*/
-			if (SvNV(val) != (NV)size) na = TRUE;
-			size_set = TRUE;
+			if (SvNV(val) != (NV)size) na = 1;
+			size_set = 1;
 		} else if (strEQ(key, "prob")) {
 			/*SvNV() read 'abc' as 0, so rbinom(prob => 'abc') returned zeros.
 			NaN passes `prob < 0 || prob > 1`, and binom_draw() then never
@@ -31684,8 +32039,8 @@ SV* rbinom(...)
 			if (!SvOK(val) || !sv_is_numeric_arg(aTHX_ val))
 				usage_croak(aTHX_ "rbinom", "prob must be a number (got '%s')", SvOK(val) ? SvPV_nolen(val) : "undef");
 			prob = SvNV(val);
-			if (nv_isnan(prob)) na = TRUE;
-			prob_set = TRUE;
+			if (nv_isnan(prob)) na = 1;
+			prob_set = 1;
 		}
 		else usage_croak(aTHX_ "rbinom", "unknown argument '%s'", key);
 	}
@@ -32010,7 +32365,7 @@ SV* quantile(...)
 		NV *x;
 		Newx(x, n_raw, NV); SAVEFREEPV(x);
 		size_t n = 0;
-		bool saw_nan = FALSE;
+		bool saw_nan = 0;
 		{
 			SSize_t len = (SSize_t)n_raw, j = 0;
 			if (!SvRMAGICAL((SV*)x_av)) av_scan_extract(x_av, &j, len, x, &n);
@@ -32023,7 +32378,7 @@ SV* quantile(...)
 				x[n++] = SvNV(tv);
 			}
 			for (size_t k = 0; k < n; k++)
-				if (nv_isnan(x[k])) { saw_nan = TRUE; break; }
+				if (nv_isnan(x[k])) { saw_nan = 1; break; }
 		}
 		if (n == 0) croak("quantile: 'x' contains no valid numbers");
 		/*R's type 7 (quantile.default, R 4.6.1), in its own arithmetic: the
@@ -33539,7 +33894,7 @@ CODE:
 	              || !SvROK(ST(1)) || SvTYPE(SvRV(ST(1))) != SVt_PVAV)
 		usage_croak(aTHX_ "auc", "the first two arguments must be array refs of scores and labels");
 	if (items % 2) usage_croak(aTHX_ "auc", "options must be key => value pairs");
-	SV *positive = NULL; bool lower_pos = FALSE;	//NULL: the default, "1"
+	SV *positive = NULL; bool lower_pos = 0;	//NULL: the default, "1"
 	for (Stack_off_t i = 2; i < items; i += 2) {
 		const char *k = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
 		if      (strEQ(k, "positive"))  positive = v;
@@ -33578,15 +33933,15 @@ CODE:
 	              || !SvROK(ST(1)) || SvTYPE(SvRV(ST(1))) != SVt_PVAV)
 		usage_croak(aTHX_ "auroc", "the first two arguments must be array refs of labels and scores");
 	if (items % 2) usage_croak(aTHX_ "auroc", "options must be key => value pairs");
-	SV *positive = NULL; bool lower_pos = FALSE;	//NULL: the default, "1"
-	bool have_cutoff = FALSE, have_frac = FALSE; NV cutoff = 0.0, active_frac = 0.0;
-	bool frac_low = FALSE;
+	SV *positive = NULL; bool lower_pos = 0;	//NULL: the default, "1"
+	bool have_cutoff = FALSE, have_frac = 0; NV cutoff = 0.0, active_frac = 0.0;
+	bool frac_low = 0;
 	for (Stack_off_t i = 2; i < items; i += 2) {
 		const char *k = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
 		if      (strEQ(k, "positive"))  positive = v;
 		else if (strEQ(k, "direction")) lower_pos = roc_direction(aTHX_ v, "auroc");
-		else if (strEQ(k, "cutoff"))    { have_cutoff = TRUE; cutoff = SvNV(v); }
-		else if (strEQ(k, "active_frac") || strEQ(k, "active")) { have_frac = TRUE; active_frac = SvNV(v); }
+		else if (strEQ(k, "cutoff"))    { have_cutoff = 1; cutoff = SvNV(v); }
+		else if (strEQ(k, "active_frac") || strEQ(k, "active")) { have_frac = 1; active_frac = SvNV(v); }
 		else if (strEQ(k, "active_side")) {
 			const char *sd = SvPV_nolen(v); // 'low'/'bottom' vs 'high'/'top'
 			frac_low = (sd[0] == 'l' || sd[0] == 'L' || sd[0] == 'b' || sd[0] == 'B');
@@ -33677,7 +34032,7 @@ PPCODE:
 		usage_croak(aTHX_ "roc", "the first two arguments must be array refs of scores and labels");
 	if (items % 2) usage_croak(aTHX_ "roc", "options must be key => value pairs");
 	SV *positive = NULL;	//NULL: the default, "1"
-	NV conf_level = NV_CONF_95; bool lower_pos = FALSE;
+	NV conf_level = NV_CONF_95; bool lower_pos = 0;
 	for (Stack_off_t i = 2; i < items; i += 2) {
 		const char *k = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
 		if      (strEQ(k, "positive"))   positive = v;
@@ -33816,17 +34171,17 @@ PPCODE:
 	              || !SvROK(ST(1)) || SvTYPE(SvRV(ST(1))) != SVt_PVAV)
 		usage_croak(aTHX_ "bedroc", "the first two arguments must be array refs of scores and labels");
 	if (items % 2) usage_croak(aTHX_ "bedroc", "options must be key => value pairs");	//a dangling key used to be ignored
-	NV alpha = 20.0; SV *positive = NULL; bool lower_pos = FALSE;	//positive NULL: the default, "1"
-	bool have_cutoff = FALSE, have_top = FALSE, have_frac = FALSE;
+	NV alpha = 20.0; SV *positive = NULL; bool lower_pos = 0;	//positive NULL: the default, "1"
+	bool have_cutoff = FALSE, have_top = FALSE, have_frac = 0;
 	NV cutoff = 0.0, top = 0.0, active_frac = 0.0;
-	bool frac_low = FALSE;
+	bool frac_low = 0;
 	for (Stack_off_t i = 2; i < items; i += 2) {
 		const char *k = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
 		if      (strEQ(k, "alpha"))     alpha = SvNV(v);
 		else if (strEQ(k, "positive"))  positive = v;
-		else if (strEQ(k, "cutoff"))    { have_cutoff = TRUE; cutoff = SvNV(v); }
-		else if (strEQ(k, "top") || strEQ(k, "fraction")) { have_top = TRUE; top = SvNV(v); }
-		else if (strEQ(k, "active_frac") || strEQ(k, "active")) { have_frac = TRUE; active_frac = SvNV(v); }
+		else if (strEQ(k, "cutoff"))    { have_cutoff = 1; cutoff = SvNV(v); }
+		else if (strEQ(k, "top") || strEQ(k, "fraction")) { have_top = 1; top = SvNV(v); }
+		else if (strEQ(k, "active_frac") || strEQ(k, "active")) { have_frac = 1; active_frac = SvNV(v); }
 		else if (strEQ(k, "active_side")) {
 			const char *sd = SvPV_nolen(v);           //'low'/'bottom' vs 'high'/'top'
 			frac_low = (sd[0] == 'l' || sd[0] == 'L' || sd[0] == 'b' || sd[0] == 'B');
@@ -34064,7 +34419,7 @@ PPCODE:
 		hv_stores(k->st, "upper",    newRV_noinc((SV *)(k->hi = newAV())));
 		k->S = 1.0; k->vterm = 0.0; k->median = NV_NAN; k->median_S = 0.0;
 		k->n = k->events = k->d = k->c = k->block = 0;
-		k->median_on_half = k->var_undefined = FALSE;
+		k->median_on_half = k->var_undefined = 0;
 	}
 	for (size_t i = 0; i < N; i++) km[o[i].grp].n++;
 	for (size_t g = 0; g < G; g++) km[g].at_risk = km[g].n;
@@ -35559,7 +35914,7 @@ void scale(...)
 					      (UV)r, (UV)len, (UV)ncol);
 				for (size_t c = 0; c < ncol; c++) {
 					SV *tv = av_slow_at(aTHX_ row_av, (SSize_t)c);
-					if (!tv) { na[r * ncol + c] = TRUE; x[r * ncol + c] = NV_NAN; continue; }
+					if (!tv) { na[r * ncol + c] = 1; x[r * ncol + c] = NV_NAN; continue; }
 					tv = sv_fetched(aTHX_ tv);
 					if (!sv_is_numeric_arg(aTHX_ tv))
 						croak("scale: non-numeric value at row %" UVuf ", column %" UVuf, (UV)r, (UV)c);
@@ -35593,13 +35948,13 @@ void scale(...)
 						SV *tv = av_slow_at(aTHX_ av, (SSize_t)j);
 						if (k == nrow) croak("%s", changed);
 						if (tv) x[k] = nv_arg_at(aTHX_ tv, "scale", (UV)j, (UV)i);
-						else { na[k] = TRUE; x[k] = NV_NAN; }
+						else { na[k] = 1; x[k] = NV_NAN; }
 						k++;
 					}
 				} else {
 					if (k == nrow) croak("%s", changed);
 					if (SvOK(arg)) x[k] = nv_arg(aTHX_ arg, "scale", (UV)i);
-					else { na[k] = TRUE; x[k] = NV_NAN; }
+					else { na[k] = 1; x[k] = NV_NAN; }
 					k++;
 				}
 			}
@@ -36208,7 +36563,7 @@ SV* rnorm(...)
 		size_t n = 0;
 		NV mean = 0.0, sd = 1.0;
 		SV *n_sv = NULL;
-		bool mean_set = FALSE, sd_set = FALSE;
+		bool mean_set = FALSE, sd_set = 0;
 		/*runif()'s parser: a string that is not a number is a key, and anything
 		else is positional, in R's order n, mean, sd.  This used to accept a
 		positional n only when SvIOK() said it was an integer, so rnorm(1e3),
@@ -36230,8 +36585,8 @@ SV* rnorm(...)
 				else {
 					if (!SvOK(val) || !sv_is_numeric_arg(aTHX_ val))
 						usage_croak(aTHX_ "rnorm", "'%s' must be a number", key);
-					if (is_mean) { mean = SvNV(val); mean_set = TRUE; }
-					else         { sd   = SvNV(val); sd_set   = TRUE; }
+					if (is_mean) { mean = SvNV(val); mean_set = 1; }
+					else         { sd   = SvNV(val); sd_set   = 1; }
 				}
 				i += 2;
 				continue;
@@ -36239,8 +36594,8 @@ SV* rnorm(...)
 			if (!SvOK(ST(i)) || !sv_is_numeric_arg(aTHX_ ST(i)))
 				usage_croak(aTHX_ "rnorm", "argument %d is not a number", (int)i + 1);
 			if      (!n_sv)     n_sv = ST(i);
-			else if (!mean_set) { mean = SvNV(ST(i)); mean_set = TRUE; }
-			else if (!sd_set)   { sd   = SvNV(ST(i)); sd_set   = TRUE; }
+			else if (!mean_set) { mean = SvNV(ST(i)); mean_set = 1; }
+			else if (!sd_set)   { sd   = SvNV(ST(i)); sd_set   = 1; }
 			else usage_croak(aTHX_ "rnorm", "too many arguments (expected n, mean, sd)");
 			i++;
 		}
@@ -38961,7 +39316,7 @@ CODE:
 		//keeps its keys behind FIRSTKEY/NEXTKEY and so just skips the pre-size
 		const IV nrows  = (IV)HvUSEDKEYS(in_hv);
 		HE      *he_row;
-		bool     first_row = TRUE;	//the columns this row opens are the ones pre-sized; see below
+		bool     first_row = 1;	//the columns this row opens are the ones pre-sized; see below
 		retval_sv = sv_2mortal(newRV_noinc((SV *)out_hv));
 		ITER_KEEP_BEGIN(in_hv);
 		hv_iterinit(in_hv);
@@ -39050,7 +39405,7 @@ CODE:
 				}
 			}
 			ITER_KEEP_END;
-			first_row = FALSE;
+			first_row = 0;
 		}
 		ITER_KEEP_END;
 	} else if (ref_type == SVt_PVAV) { // Array-of-Arrays
@@ -40356,7 +40711,7 @@ SV* density(...)
 		NV *twr = NULL, *twi = NULL, *xords = NULL, *xout = NULL;
 		bool *restrict isna = NULL;
 		const char *err = NULL;
-		bool err_usage = FALSE;	//err is about an argument's form, so density's help screen goes with it
+		bool err_usage = 0;	//err is about an argument's form, so density's help screen goes with it
 		char errbuf[256];
 		size_t N0 = 0, N = 0, nx = 0, nna = 0, n = 0, n_user = 0, m = 0;
 		NV bw = 0.0, totMass = 1.0, wsum = 0.0;
@@ -40400,7 +40755,7 @@ SV* density(...)
 		if (has_wts) {
 			AV *wav;
 			if (!SvROK(w_sv) || SvTYPE(SvRV(w_sv)) != SVt_PVAV) {
-				err = "'weights' must be an array reference"; err_usage = TRUE;
+				err = "'weights' must be an array reference"; err_usage = 1;
 				goto dens_cleanup;
 			}
 			wav = (AV *)SvRV(w_sv);
@@ -40499,12 +40854,12 @@ SV* density(...)
 				bw = SvNV(width_sv) / dens_width_factor(kernel);
 			} else {
 				bw_rule = dens_match_bw(SvPV_nolen(width_sv));
-				if (bw_rule < 0) { err = "unknown bandwidth rule"; err_usage = TRUE; goto dens_cleanup; }
+				if (bw_rule < 0) { err = "unknown bandwidth rule"; err_usage = 1; goto dens_cleanup; }
 				bw_is_rule = 1;
 			}
 		} else if (bw_sv && !looks_like_number(bw_sv)) {
 			bw_rule = dens_match_bw(SvPV_nolen(bw_sv));
-			if (bw_rule < 0) { err = "unknown bandwidth rule"; err_usage = TRUE; goto dens_cleanup; }
+			if (bw_rule < 0) { err = "unknown bandwidth rule"; err_usage = 1; goto dens_cleanup; }
 			bw_is_rule = 1;
 		} else if (bw_sv) {
 			bw = SvNV(bw_sv);

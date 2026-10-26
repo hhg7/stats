@@ -58,7 +58,7 @@
 .\" ========================================================================
 .\"
 .IX Title "Stats::LikeR 3"
-.TH Stats::LikeR 3 2026-10-22 "perl v5.44.0" "User Contributed Perl Documentation"
+.TH Stats::LikeR 3 2026-10-26 "perl v5.44.0" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -9138,8 +9138,10 @@ Mirroring \f(CW\*(C`Excel::Writer::XLSX\*(C'\fR\*(Aqs
 the workbook\*(Aqs document \fBcomments\fR property (\f(CW\*(C`dc:description\*(C'\fR in
 \&\f(CW\*(C`docProps/core.xml\*(C'\fR); a \f(CW\*(C`xlsx_comment\*(C'\fR string (or array ref of strings) is
 appended after it. \f(CW\*(C`xlsx_sheet\*(C'\fR sets the worksheet name (default \f(CW\*(C`Sheet1\*(C'\fR). As
-in openpyxl, a name that is empty or holds any of \f(CW\*(C`\e * ? : / [ ]\*(C'\fR is an error, and
-one longer than 31 characters draws a warning, since Excel cannot read it:
+in \f(CW\*(C`Excel::Writer::XLSX\*(C'\fR and XlsxWriter, a name that is empty, holds any of
+\&\f(CW\*(C`\e * ? : / [ ]\*(C'\fR, or starts or ends with an apostrophe is an error. As in
+openpyxl, a name longer than 31 characters draws a warning, since Excel cannot
+read it:
 .PP
 .Vb 4
 \& write_table(\e@rows, \*(Aqreport.xlsx\*(Aq,
@@ -9147,6 +9149,43 @@ one longer than 31 characters draws a warning, since Excel cannot read it:
 \&     \*(Aqxlsx_comment\*(Aq => \*(Aqbatch 9\*(Aq,
 \& );
 .Ve
+.PP
+\&\fBSeveral worksheets.\fR A hash whose values are data frames is written as a
+workbook with one worksheet per key. Each key names its sheet, and the sheets
+come in sorted key order, as a HoH\*(Aqs rows do. This is the shape
+\&\f(CW\*(C`read_table\*(C'\fR returns for a workbook of several sheets, so the two
+round\-trip:
+.PP
+.Vb 6
+\& my %by_gene = (
+\&     AUR1 => [ { pdb => \*(Aq1ABC\*(Aq, score => 0.9 }, { pdb => \*(Aq2XYZ\*(Aq, score => 0.5 } ],
+\&     COX9 => { pdb => [\*(Aq3DEF\*(Aq], score => [0.7] },
+\& );
+\& write_table(\e%by_gene, \*(Aqgenes.xlsx\*(Aq);      # sheets AUR1 and COX9
+\& my $book = read_table(\*(Aqgenes.xlsx\*(Aq);       # { AUR1 => [...], COX9 => [...] }
+.Ve
+.PP
+A sheet can be any shape but a flat hash: an AoH, an AoA, a HoA or a HoH. An
+empty \f(CW\*(C`[]\*(C'\fR or \f(CW\*(C`{}\*(C'\fR is a sheet with no rows. The other options (\f(CW\*(C`col_names\*(C'\fR,
+\&\f(CW\*(C`row_names\*(C'\fR, \f(CW\*(C`undef_val\*(C'\fR, \f(CW\*(C`xlsx_comment\*(C'\fR, \f(CW\*(C`xlsx_freeze_rows\*(C'\fR and
+\&\f(CW\*(C`xlsx_freeze_cols\*(C'\fR) apply to every sheet. A warning about one sheet names it
+(\f(CW\*(C`write_table: sheet \*(AqAUR1\*(Aq: ...\*(C'\fR), and so does an error.
+.PP
+The hash counts as a workbook when any of its values is a data frame, that is,
+an array or hash whose first defined element is itself a reference. A column of
+a HoA, or a row of a HoH, holds plain values instead. Every other value must then
+be a data frame or empty. A plain value or a column beside a data frame is an
+error that names both keys. A hash whose values are all empty is still the
+empty HoA or HoH it always was.
+.PP
+Only an \f(CW\*(C`.xlsx\*(C'\fR file holds more than one table, so a workbook is an error for any
+other kind of file. \f(CW\*(C`xlsx_sheet\*(C'\fR is an error too, since the keys name the sheets.
+Each key is checked as a sheet name, as above, before the file is opened. Two
+keys that are the same with case ignored (\f(CW\*(C`Sheet1\*(C'\fR and \f(CW\*(C`sheet1\*(C'\fR) are an error as
+well, because Excel cannot open such a workbook. Case is compared with perl\*(Aqs
+\&\f(CW\*(C`lc\*(C'\fR, which is what \f(CW\*(C`Excel::Writer::XLSX\*(C'\fR uses. The sheets are streamed one after
+another, so only the sheet being written is held in memory. Up to 65530 sheets
+fit in a ZIP archive without ZIP64.
 .PP
 \&\f(CW\*(C`xlsx_freeze_rows\*(C'\fR and \f(CW\*(C`xlsx_freeze_cols\*(C'\fR freeze that many leading rows/columns in place (Excel\*(Aqs \fIfreeze panes\fR), so they stay visible while scrolling — most often used to pin the header row. They go up to 1048575 and 16383, one short of the sheet\*(Aqs limits:
 .PP
