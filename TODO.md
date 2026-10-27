@@ -69,3 +69,14 @@ its test file:
 - **`vif()`** has only `car::vif()`'s default `type = "terms"`; `type =
   "predictor"`, which `car` suggests for a model with interactions, is not
   implemented.
+- **`read_table()` of an `.xlsx`** returns its text as undecoded UTF-8 bytes:
+  sheet names, the keys of the hash it returns for a workbook, and string
+  cells alike. A workbook that `write_table()` wrote from the keys `café` and
+  `αβ` reads back with keys of 5 and 4 bytes (`caf\xC3\xA9`, `\xCE\xB1\xCE\xB2`),
+  so `$book->{"\x{3b1}\x{3b2}"}` finds nothing, and a cell `α` reads back as 2
+  bytes. README's "the two round-trip" for a workbook holds only for ASCII
+  keys. `write_table()` itself writes the names correctly (openpyxl 3.1.5
+  reads them back as `café` and `αβ`); the fix belongs in `read_table()`,
+  which would have to decode every name and string cell, and that changes
+  what it returns for every non-ASCII `.xlsx` cell, not only for sheet names.
+  Found on 2026-10-26, checking 0.341's workbooks.

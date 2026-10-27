@@ -1,5 +1,38 @@
 Revision history for Stats-LikeR
 
+0.341 2026-10-26 CDT (Claude Opus 5.5 helped)
+
+ [write_table: workbooks of several worksheets]
+
+ - write_table(\%book, 'out.xlsx') writes a hash of data frames as one
+   workbook, a worksheet per key, the keys sorted as a HoH's rows are. A
+   sheet is any frame but a flat hash (AoH, AoA, HoA, HoH), or an empty []
+   or {}; col_names, row_names, undef_val, xlsx_comment and the freeze
+   options apply to every sheet. It is the shape read_table returns for a
+   workbook of several sheets, so the two round-trip. Up to 0.34 such a hash
+   was taken for a HoA or HoH and refused: "Cannot write nested reference
+   types to table". The sheets are streamed one after another, as the single
+   worksheet was, so only the one being written is in memory; a single
+   table's workbook is byte for byte what 0.34 wrote.
+
+ - A hash is a workbook when any of its values is a data frame, an array or
+   hash whose first defined element is a reference. Every other value must
+   then be a frame or empty, and a column or scalar beside a frame is refused
+   naming both keys. A workbook written to anything but .xlsx, or with
+   xlsx_sheet, is refused. Errors and warnings about one sheet name it:
+   "write_table: sheet 'AUR1': ...". A tied sheet is not looked into, so
+   that no value of it is FETCHed twice; a hash whose sheets are all tied is
+   still read as a HoA or HoH.
+
+ - Each key is checked as a sheet name before the file is opened, and two
+   keys the same with case ignored (Sheet1, sheet1) are refused, as
+   Excel::Writer::XLSX 1.15 and XlsxWriter 1.3.9 refuse them; case is folded
+   with perl's lc(), as Excel::Writer::XLSX folds it. A name starting or
+   ending with an apostrophe, which Excel refuses, is now refused for
+   xlsx_sheet too. t/write_table.xlsx.book.t takes its cases from pandas
+   3.0.4's test_creating_and_reading_multiple_sheets and test_sheets and
+   from Excel::Writer::XLSX 1.15's workbook_check_sheetname.t.
+
 0.34 2026-10-21 CDT (Claude Opus 5.5 helped)
 
  [New function: dftype]
