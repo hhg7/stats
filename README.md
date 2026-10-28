@@ -8443,8 +8443,8 @@ XlsxWriter does. A literal `_x0041_` in a cell is written `_x005F_x0041_` so
 that it is not mistaken for one, and so is every other underscore that would
 open an escape, overlapping ones included, so that a reader decoding left to
 right gets back exactly the text written.
-In the sheet name and `xlsx_comment` such characters are dropped. A code point
-above U+10FFFF, which no Unicode encoding has, is an error.
+In `xlsx_comment` such characters are dropped, and a sheet name holding one is
+an error. A code point above U+10FFFF, which no Unicode encoding has, is an error.
 
 Excel's limits are enforced rather than written past: a worksheet holds 1048576
 rows (header included) and 16384 columns, and a cell 32767 characters, the
@@ -8464,12 +8464,17 @@ Mirroring `Excel::Writer::XLSX`'s
 `$workbook->set_properties(comments => comments())`, the same
 `written by <cwd>/<script>` provenance line the LaTeX writer emits is stored in
 the workbook's document **comments** property (`dc:description` in
-`docProps/core.xml`); a `xlsx_comment` string (or array ref of strings) is
-appended after it. `xlsx_sheet` sets the worksheet name (default `Sheet1`). As
+`docProps/core.xml`). Lines naming the login name (`user:`), the host name
+(`host:`), the perl version (`perl: v5.44.0`) and the `Stats::LikeR` version
+follow it, and a `xlsx_comment` string (or array ref of strings) is appended
+after those. A user or host name that cannot be found is left out. The login
+name is also the workbook's **Author** and **Last modified by** (`dc:creator`
+and `cp:lastModifiedBy`), which are `Stats::LikeR` when there is none. `xlsx_sheet` sets the worksheet name (default `Sheet1`). As
 in `Excel::Writer::XLSX` and XlsxWriter, a name that is empty, holds any of
-`\ * ? : / [ ]`, or starts or ends with an apostrophe is an error. As in
-openpyxl, a name longer than 31 characters draws a warning, since Excel cannot
-read it:
+`\ * ? : / [ ]`, or starts or ends with an apostrophe is an error, and so is
+one holding a character XML cannot hold. As in openpyxl, a name longer than 31
+characters draws a warning, since Excel cannot read it; Excel counts a
+character above U+FFFF, such as an emoji, as two:
 
     write_table(\@rows, 'report.xlsx',
         'xlsx_sheet'   => 'Results',

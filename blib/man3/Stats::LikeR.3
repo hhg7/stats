@@ -58,7 +58,7 @@
 .\" ========================================================================
 .\"
 .IX Title "Stats::LikeR 3"
-.TH Stats::LikeR 3 2026-10-27 "perl v5.44.0" "User Contributed Perl Documentation"
+.TH Stats::LikeR 3 2026-10-28 "perl v5.44.0" "User Contributed Perl Documentation"
 .\" For nroff, turn off justification.  Always turn off hyphenation; it makes
 .\" way too many mistakes in technical documents.
 .if n .ad l
@@ -9115,8 +9115,8 @@ XlsxWriter does. A literal \f(CW\*(C`_x0041_\*(C'\fR in a cell is written \f(CW\
 that it is not mistaken for one, and so is every other underscore that would
 open an escape, overlapping ones included, so that a reader decoding left to
 right gets back exactly the text written.
-In the sheet name and \f(CW\*(C`xlsx_comment\*(C'\fR such characters are dropped. A code point
-above U+10FFFF, which no Unicode encoding has, is an error.
+In \f(CW\*(C`xlsx_comment\*(C'\fR such characters are dropped, and a sheet name holding one is
+an error. A code point above U+10FFFF, which no Unicode encoding has, is an error.
 .PP
 Excel\*(Aqs limits are enforced rather than written past: a worksheet holds 1048576
 rows (header included) and 16384 columns, and a cell 32767 characters, the
@@ -9136,12 +9136,17 @@ Mirroring \f(CW\*(C`Excel::Writer::XLSX\*(C'\fR\*(Aqs
 \&\f(CW\*(C`$workbook\->set_properties(comments => comments())\*(C'\fR, the same
 \&\f(CW\*(C`written by <cwd>/<script>\*(C'\fR provenance line the LaTeX writer emits is stored in
 the workbook\*(Aqs document \fBcomments\fR property (\f(CW\*(C`dc:description\*(C'\fR in
-\&\f(CW\*(C`docProps/core.xml\*(C'\fR); a \f(CW\*(C`xlsx_comment\*(C'\fR string (or array ref of strings) is
-appended after it. \f(CW\*(C`xlsx_sheet\*(C'\fR sets the worksheet name (default \f(CW\*(C`Sheet1\*(C'\fR). As
+\&\f(CW\*(C`docProps/core.xml\*(C'\fR). Lines naming the login name (\f(CW\*(C`user:\*(C'\fR), the host name
+(\f(CW\*(C`host:\*(C'\fR), the perl version (\f(CW\*(C`perl: v5.44.0\*(C'\fR) and the \f(CW\*(C`Stats::LikeR\*(C'\fR version
+follow it, and a \f(CW\*(C`xlsx_comment\*(C'\fR string (or array ref of strings) is appended
+after those. A user or host name that cannot be found is left out. The login
+name is also the workbook\*(Aqs \fBAuthor\fR and \fBLast modified by\fR (\f(CW\*(C`dc:creator\*(C'\fR
+and \f(CW\*(C`cp:lastModifiedBy\*(C'\fR), which are \f(CW\*(C`Stats::LikeR\*(C'\fR when there is none. \f(CW\*(C`xlsx_sheet\*(C'\fR sets the worksheet name (default \f(CW\*(C`Sheet1\*(C'\fR). As
 in \f(CW\*(C`Excel::Writer::XLSX\*(C'\fR and XlsxWriter, a name that is empty, holds any of
-\&\f(CW\*(C`\e * ? : / [ ]\*(C'\fR, or starts or ends with an apostrophe is an error. As in
-openpyxl, a name longer than 31 characters draws a warning, since Excel cannot
-read it:
+\&\f(CW\*(C`\e * ? : / [ ]\*(C'\fR, or starts or ends with an apostrophe is an error, and so is
+one holding a character XML cannot hold. As in openpyxl, a name longer than 31
+characters draws a warning, since Excel cannot read it; Excel counts a
+character above U+FFFF, such as an emoji, as two:
 .PP
 .Vb 4
 \& write_table(\e@rows, \*(Aqreport.xlsx\*(Aq,

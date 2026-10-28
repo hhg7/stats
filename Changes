@@ -33,6 +33,86 @@ Revision history for Stats-LikeR
    3.0.4's test_creating_and_reading_multiple_sheets and test_sheets and
    from Excel::Writer::XLSX 1.15's workbook_check_sheetname.t.
 
+ [write_table: who wrote a workbook, and with what]
+
+ - An .xlsx workbook's document comments (dc:description) now record the
+   login name, the host name, the perl version and the Stats::LikeR version,
+   one "user:", "host:", "perl:" and "Stats::LikeR:" line each, between the
+   "written by <cwd>/<script>" line and any xlsx_comment. The login name is
+   also the Author and Last modified by fields (dc:creator,
+   cp:lastModifiedBy), which up to 0.34 were always Stats::LikeR and still
+   are when no name can be found. The names come from getpwuid(), getlogin()
+   and then $ENV{USER}, USERNAME or LOGNAME, and from Sys::Hostname, all
+   looked up in perl so that Windows, where getpwuid() is unimplemented, is
+   covered; a name not found is left out rather than guessed.
+
+ - A login name, host name or directory whose bytes are valid UTF-8 is read
+   as UTF-8, and any other as Latin-1. Taking all of them for Latin-1 wrote a
+   UTF-8 login name "josé" as "JosÃ©".
+
+ - write_table() leaves the caller's $@ alone. An .xlsx write cleared it,
+   through the evals that look up the login and host names, and so did the
+   first .tex or .xlsx write of a program, through those Cwd.pm runs as it
+   loads.
+
+ [write_table: sheet names XML cannot hold]
+
+ - A sheet name holding a character XML 1.0 cannot hold (a control
+   character other than tab and newline, U+FFFE, U+FFFF or a surrogate) is
+   refused, naming the character. It used to be dropped from workbook.xml
+   after the checks had passed, so "a\x01" beside "a" wrote two sheets named
+   "a", which Excel cannot open, and "\x02" a sheet with an empty name; a
+   surrogate died inside lc() with "Operation "lc" returns its argument for
+   UTF-16 surrogate". xlsx_comment still drops such characters.
+
+ - The 31-character limit on a sheet name counts UTF-16 code units, as Excel
+   does, so a character above U+FFFF, such as an emoji, counts two. Sixteen
+   emoji used to pass without the warning.
+
+ [oneway_test and p_adjust: a tied cell that changes the frame]
+
+ - Both functions size a buffer in one pass over the frame and fill it in a
+   second, and a tied cell's FETCH runs in the second. A FETCH that grew a
+   later group made oneway_test() write past the end of its buffer: the
+   process aborted with "malloc(): unaligned tcache chunk detected" for an
+   array of groups, and the heap was corrupted silently for a hash of groups.
+   Each group and formula column is now held and read only to the length the
+   first pass measured.
+
+ - A FETCH that replaced a p_adjust() row with a number segfaulted, and one
+   that shrank a row left the adjusted values written through uninitialised
+   pointers. The frame, its rows and columns and their values are now held,
+   and every row and column is checked again: one that was replaced, grew or
+   shrank croaks "the data frame changed while it was being read", and one
+   merely deleted is read as it was. t/tied_cell.mutation.t covers every
+   shape.
+
+ - The same sweep found nine more functions that read a row, column, cell
+   or key of the caller's frame through a pointer taken before user code ran
+   -- a tied cell's FETCH, or a group_by() filter or filter() closure -- and
+   that code could free it. write_table() segfaulted on an AoA row and on a
+   HoH row that stopped being a hash; group_by() died "panic: attempt to copy
+   freed scalar" or "Bizarre copy of ARRAY"; cor(), cov(), cor_test(), agg(),
+   merge(), ljoin() and filter() read freed memory that valgrind reported.
+   Each now holds what it borrows for as long as it reads it, so it sees
+   the frame as it was when it took it; write_table() croaks "the data
+   frame changed while it was being written" where a row it checked is no
+   longer one. cor()'s matrix rows, which a comment had left unheld as not
+   worth nrows refcount pairs, are held in one mortal array. cor_test() also
+   fetched y's cell before reading x's, so a FETCH on x that grew y left the
+   pointer in y's old storage, and the array scan behind cor(), cov() and
+   quantile() now stops at the array's current end, not the length it was
+   given.
+
+ - Every XSUB now holds the arrays and hashes its reference arguments refer
+   to, until the statement that called it is over. Perl's argument stack
+   holds no references, so a FETCH or callback that did `undef $x` on the
+   caller's only reference freed the array an XSUB was reading, in any of
+   the module's functions. dXSARGS, which opens every XSUB, is redefined to
+   take the holds, so a new XSUB gets them too. It costs about 4.5 ns a
+   call, measured on 4 million calls of mean() of three numbers and
+   dftype(); a call doing real work does not show it.
+
 0.34 2026-10-21 CDT (Claude Opus 5.5 helped)
 
  [New function: dftype]

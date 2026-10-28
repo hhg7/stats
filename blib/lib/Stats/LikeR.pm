@@ -1121,6 +1121,32 @@ sub _usage_text {
 	return defined $screen ? $screen : '';
 }
 
+# _xlsx_provenance() -- ($user, $lines) for write_table's .xlsx document
+# properties (xlsx_written_by() in the XS).  $user is the login name, undef when
+# none can be found; $lines is "user: ...", "host: ...", "perl: ..." and
+# "Stats::LikeR: ..." joined by newlines, leaving out any that is unknown.
+# getpwuid() dies "unimplemented" on Windows, so getlogin() and the environment
+# are the fallbacks there; Sys::Hostname (core) croaks when it finds no name.
+# $@ is local: a successful eval clears it, and this runs inside the caller's
+# write_table(), whose $@ up to 0.341 came back empty.
+sub _xlsx_provenance {
+	local $@;
+	my $user = eval { scalar getpwuid($<) };
+	$user = getlogin() unless defined $user && length $user;
+	for my $k (qw(USER USERNAME LOGNAME)) {
+		last if defined $user && length $user;
+		$user = $ENV{$k};
+	}
+	$user = undef unless defined $user && length $user;
+	my $host = eval { require Sys::Hostname; Sys::Hostname::hostname() };
+	$host = undef unless defined $host && length $host;
+	my @lines;
+	push @lines, "user: $user" if defined $user;
+	push @lines, "host: $host" if defined $host;
+	push @lines, sprintf('perl: v%vd', $^V), "Stats::LikeR: $VERSION";
+	return ($user, join("\n", @lines));
+}
+
 # _sheet_name_clash(@names) -- the first two of a workbook's worksheet names
 # that are the same with case ignored, or nothing.  Excel cannot open a
 # workbook holding both; write_table's XS (wt_sheet_names_distinct()) calls this
@@ -19340,8 +19366,8 @@ XlsxWriter does. A literal C<_x0041_> in a cell is written C<_x005F_x0041_> so
 that it is not mistaken for one, and so is every other underscore that would
 open an escape, overlapping ones included, so that a reader decoding left to
 right gets back exactly the text written.
-In the sheet name and C<xlsx_comment> such characters are dropped. A code point
-above U+10FFFF, which no Unicode encoding has, is an error.
+In C<xlsx_comment> such characters are dropped, and a sheet name holding one is
+an error. A code point above U+10FFFF, which no Unicode encoding has, is an error.
 
 Excel's limits are enforced rather than written past: a worksheet holds 1048576
 rows (header included) and 16384 columns, and a cell 32767 characters, the
@@ -19361,12 +19387,17 @@ Mirroring C<Excel::Writer::XLSX>'s
 C<< $workbook-E<gt>set_properties(comments =E<gt> comments()) >>, the same
 C<< written by E<lt>cwdE<gt>/E<lt>scriptE<gt> >> provenance line the LaTeX writer emits is stored in
 the workbook's document B<comments> property (C<dc:description> in
-C<docProps/core.xml>); a C<xlsx_comment> string (or array ref of strings) is
-appended after it. C<xlsx_sheet> sets the worksheet name (default C<Sheet1>). As
+C<docProps/core.xml>). Lines naming the login name (C<user:>), the host name
+(C<host:>), the perl version (C<perl: v5.44.0>) and the C<Stats::LikeR> version
+follow it, and a C<xlsx_comment> string (or array ref of strings) is appended
+after those. A user or host name that cannot be found is left out. The login
+name is also the workbook's B<Author> and B<Last modified by> (C<dc:creator>
+and C<cp:lastModifiedBy>), which are C<Stats::LikeR> when there is none. C<xlsx_sheet> sets the worksheet name (default C<Sheet1>). As
 in C<Excel::Writer::XLSX> and XlsxWriter, a name that is empty, holds any of
-C<\ * ? : / [ ]>, or starts or ends with an apostrophe is an error. As in
-openpyxl, a name longer than 31 characters draws a warning, since Excel cannot
-read it:
+C<\ * ? : / [ ]>, or starts or ends with an apostrophe is an error, and so is
+one holding a character XML cannot hold. As in openpyxl, a name longer than 31
+characters draws a warning, since Excel cannot read it; Excel counts a
+character above U+FFFF, such as an emoji, as two:
 
  write_table(\@rows, 'report.xlsx',
      'xlsx_sheet'   => 'Results',

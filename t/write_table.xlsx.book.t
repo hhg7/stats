@@ -198,6 +198,66 @@ SKIP: {
 		'the warning names it' );
 }
 
+# A character XML 1.0 cannot hold is refused in a name.  Up to 0.341 it was
+# dropped from workbook.xml after the checks had passed, so "a\x01" beside "a"
+# wrote two sheets named "a" and "\x02" one named "", and a surrogate died
+# inside lc() with "Operation "lc" returns its argument".
+{
+	my $f = path();
+	my @cases;
+	{
+		no warnings;    # a surrogate or noncharacter literal is a compile-time warning on 5.10 and 5.12, fatal here
+		@cases = (["a\x01", '0001'], ["\x02", '0002'], ["\x1F", '001F'],
+		          ['s' . chr(0xD800) . 't', 'D800'], ['x' . chr(0xFFFE) . 'y', 'FFFE'], ['x' . chr(0xFFFF), 'FFFF']);
+	}
+	for my $case (@cases) {
+		my ($n, $u) = @$case;
+		throws_ok { write_table({ $n => [ { a => 1 } ], a => [ { a => 2 } ] }, $f) }
+			qr/^write_table: worksheet name '.*' may not contain U\+$u, which XML cannot hold/s,
+			"a sheet name holding U+$u dies";
+		throws_ok { write_table([ { a => 1 } ], $f, xlsx_sheet => $n) }
+			qr/\nwrite_table: error: 'xlsx_sheet' may not contain U\+$u, which XML cannot hold/,
+			"an xlsx_sheet holding U+$u dies";
+	}
+	ok( !-e $f, 'none of them wrote the file' );
+	# Excel counts a sheet name's 31 in UTF-16 code units, so a character past
+	# U+FFFF counts two: 15 emoji are 30 units and fit, 16 are 32 and do not.
+	# Up to 0.341 code points were counted, and 16 passed.
+	for my $case ([15, 0], [16, 1]) {
+		my ($k, $warns) = @$case;
+		my @w;
+		{
+			local $SIG{__WARN__} = sub { push @w, @_ };
+			write_table({ "\x{1F600}" x $k => [ { a => 1 } ], b => [ { a => 2 } ] }, path(), quiet => 1);
+		}
+		is( scalar @w, $warns, "$k characters past U+FFFF " . ($warns ? 'warn' : 'do not warn') . ' as too long' );
+	}
+}
+
+# write_table() leaves the caller's $@ alone.  Up to 0.341 an .xlsx write
+# cleared it, through the evals of _xlsx_provenance() and, on the first .tex or
+# .xlsx write of a program, those Cwd.pm runs as it loads.  Cwd is in by now
+# (File::Temp loads it), so the second is checked only by hand.
+for my $ext (qw(xlsx tex)) {
+	eval { die "boom\n" };
+	write_table([ { a => 1 } ], path($ext), quiet => 1);
+	is( $@, "boom\n", "a .$ext write_table() keeps \$@" );
+}
+
+# A login name that is UTF-8 bytes, as getpwuid() returns one in a UTF-8
+# locale, is read as UTF-8.  Up to 0.341 it was taken for Latin-1, and "josé"
+# was written into dc:creator and dc:description as "JosÃ©".
+SKIP: {
+	skip 'IO::Uncompress::Unzip is not available', 2 unless $have_unzip;
+	no warnings 'redefine';
+	local *Stats::LikeR::_xlsx_provenance = sub { ("jos\xc3\xa9", "user: jos\xc3\xa9") };
+	my $f = path();
+	write_table([ { a => 1 } ], $f, quiet => 1);
+	my $core = member($f, 'docProps/core.xml');
+	like( $core, qr{<dc:creator>jos\xc3\xa9</dc:creator>}, 'a UTF-8 login name is the author as UTF-8' );
+	like( $core, qr{\nuser: jos\xc3\xa9</dc:description>}, 'and in the comments as UTF-8' );
+}
+
 # xlsx_sheet is checked the same way for a single table
 throws_ok { write_table([ { a => 1 } ], path(), xlsx_sheet => q('Sheet)) }
 	qr/\nwrite_table: error: 'xlsx_sheet' may not start or end with an apostrophe/,

@@ -15,6 +15,29 @@
 #include <float.h>
 #include <string.h>
 #include <stdint.h> // uint64_t — harmless if perl.h already pulled it in
+
+/*Every XSUB holds what its reference arguments refer to.
+
+An XSUB that takes SvRV() of an argument borrows the referent: perl's
+argument stack holds no references (outside a PERL_RC_STACK build), so the
+caller's variable is the only owner.  User code that runs during the call --
+a tied cell's FETCH, a filter callback -- can `undef $x` and free the array
+being read.  Up to 0.341 that was a use-after-free in any XSUB that read a
+cell after taking SvRV().  xs_args_hold() takes a reference on each
+referent, as a mortal, so it lives until the statement that made the call
+is over; dXSARGS, which xsubpp opens every XSUB with, is redefined to call it,
+so no XSUB can be added without it.  It costs a refcount pair and a tmps slot
+per reference argument.  Containers *inside* an argument (an AoA's rows) are
+held where they are read; see sv_hold().  The redefinition is perl's own
+(XSUB.h, the same text from 5.10 to 5.44) plus the call.*/
+static void xs_args_hold(pTHX_ SSize_t ax, SSize_t items) {
+	for (SSize_t i = 0; i < items; i++) {
+		SV *a = PL_stack_base[ax + i];
+		if (a && SvROK(a)) (void)sv_2mortal(SvREFCNT_inc_simple_NN(SvRV(a)));
+	}
+}
+#undef dXSARGS
+#define dXSARGS	dSP; dAXMARK; dITEMS; xs_args_hold(aTHX_ (SSize_t)ax, (SSize_t)items)
 /*`restrict` is spelled bare, which is C99 syntax.
 
 It is carried only where it can change the code the compiler emits: a loop
@@ -710,7 +733,11 @@ static LIKER_NOINLINE void av_scan_extract(AV *av, SSize_t *jp, SSize_t len,	NV 
 	SV **el = AvARRAY(av);
 	size_t n = *np;
 	SSize_t j = *jp;
-	for (; j < len; j++) {
+	/*The array as it is now, not as len measured it: the caller's slow path
+	runs get magic between scans, and a FETCH can shrink the array or undef
+	it (AvARRAY NULL).  The slow path takes what is past the end as NaN.*/
+	const SSize_t lim = AvFILLp(av) + 1 < len ? AvFILLp(av) + 1 : len;
+	for (; j < lim; j++) {
 		NV v;
 		if (!el[j] || !sv_plain_nv(el[j], &v)) break;
 		out[n++] = v;
@@ -3129,6 +3156,20 @@ HePV() must be copied before the next hv_iternext(): it replaces its key SV at
 every step. And a tied walk must run to the end -- see cfilter for the leak
 perl before 5.18 has when hv_iterinit() cuts one short.*/
 #define HV_IS_TIED(hv)	(SvRMAGICAL(hv) && mg_find((const SV *)(hv), PERL_MAGIC_tied))
+/*Hold sv until the enclosing scope is left, and return it.
+
+A pointer into a caller's frame -- a row, a column, a cell -- is borrowed, and
+user code that runs while it is in use (a tied cell's FETCH, a filter
+callback) can free it by deleting or replacing the slot it came from.  Up to
+0.341 that was a use-after-free in write_table, cor, cov, cor_test, agg,
+group_by, filter, merge and ljoin; t/tied_cell.mutation.t has the cases.*/
+static SV *sv_hold(pTHX_ SV *sv) {
+	if (sv) {
+		SvREFCNT_inc_simple_void_NN(sv);
+		SAVEFREESV(sv);
+	}
+	return sv;
+}
 static SV *he_val(pTHX_ HV *hv, HE *he) {
 	if (!SvRMAGICAL(hv)) return HeVAL(he);
 	SV *v = hv_iterval(hv, he);
@@ -4163,6 +4204,8 @@ typedef struct {
 	STRLEN kl;
 	bool utf8;
 	SV *val;	//the value, its get magic run
+	SV *dst;	//p_adjust()'s output SV for it, stored under the key before any cell is read
+	bool sel;	//p_adjust(): a p-value column, adjusted, rather than copied
 } PaEnt;
 
 /*Order entries by key, so that tied p-values break the same way on every run
@@ -4235,13 +4278,53 @@ static void pa_check(pTHX_ SV *cell, const char *col, IV idx) {
 	      "that hold p-values with columns => [...]", SvPV_nolen(cell), idx);
 }
 
-/*Reserve this cell's place in the family and return the SV that stands in
-for it in the output frame until the adjusted value is written back.*/
+/*Reserve this cell's place in the family in dst, the SV that stands in for
+it in the output frame until the adjusted value is written back.  *k counts
+every cell, the ones past n too, so that the caller can see that the frame
+grew while it was read; only the first n are stored.*/
+static void pa_place_into(pTHX_ SV *cell, SV *dst, NV *pv, SV **slots, size_t *k, size_t n) {
+	const NV p = (cell && SvOK(cell)) ? SvNV(cell) : 1.0;
+	sv_setnv(dst, p);
+	if (*k < n) { pv[*k] = p; slots[*k] = dst; }
+	(*k)++;
+}
 static SV *pa_place(pTHX_ SV *cell, NV *pv, SV **slots, size_t *k, size_t n) {
-	NV p = (cell && SvOK(cell)) ? SvNV(cell) : 1.0;
-	SV *place = newSVnv(p);
-	if (*k < n) { pv[*k] = p; slots[(*k)++] = place; }
+	SV *place = newSV(0);
+	pa_place_into(aTHX_ cell, place, pv, slots, k, n);
 	return place;
+}
+
+/*p_adjust()'s croak for a frame that a tied cell's FETCH changed between the
+pass that sized the family and the one that fills it.*/
+#define PA_CHANGED()	croak("p_adjust: the data frame changed while it was being read " \
+	"(a tied cell's FETCH altered it)")
+
+/*Keep sv alive to the next FREETMPS, though a tied cell's FETCH deletes it.*/
+static void pa_hold(pTHX_ SV *sv) {
+	if (sv) (void)sv_2mortal(SvREFCNT_inc_simple_NN(sv));
+}
+
+/*p_adjust()'s second pass over the n entries of one hash, already collected
+by pa_sorted_keys(): store an output SV under every key in out first, while
+no cell has been read, and only then read the cells.  A FETCH can delete a
+later key, and kp points into the hash's own copy of it; each value is held
+for the same reason.  want == NULL selects every key.*/
+static void pa_fill_hash(pTHX_ PaEnt *restrict ents, SSize_t n, HV *out, HV *want,
+	NV *pv, SV **slots, size_t *k, size_t nfam) {
+	//not restrict: out, want, pv and slots are perl-managed or shared with the caller's other rows
+	for (SSize_t j = 0; j < n; j++) {
+		PaEnt *e = &ents[j];
+		const I32 sk = e->utf8 ? -(I32)e->kl : (I32)e->kl;
+		e->sel = !want || hv_fetch(want, e->kp, sk, 0) != NULL;
+		pa_hold(aTHX_ e->val);
+		e->dst = newSV(0);
+		(void)hv_store(out, e->kp, sk, e->dst, 0);
+	}
+	for (SSize_t j = 0; j < n; j++) {
+		PaEnt *e = &ents[j];
+		if (e->sel)     pa_place_into(aTHX_ e->val, e->dst, pv, slots, k, nfam);
+		else if (e->val) sv_setsv(e->dst, e->val);
+	}
 }
 
 static SV *pa_copy(pTHX_ SV *cell) {
@@ -4781,6 +4864,16 @@ static bool nv_all_equal(const NV *a, size_t n) {
 	}
 	return 1;
 }
+/*A mortal array holding a reference to each of n rows, so that perl code run
+while they are read cannot free one.  One av_push() per row, where a
+SAVEFREESV() per row would take a save-stack entry each.*/
+static AV *row_keep(pTHX_ SV *const *restrict rows, size_t n) {
+	AV *keep = (AV*)sv_2mortal((SV*)newAV());
+	if (n) av_extend(keep, (SSize_t)n - 1);
+	for (size_t i = 0; i < n; i++) av_push(keep, SvREFCNT_inc_simple_NN(rows[i]));
+	return keep;
+}
+
 /*Transpose an AoA matrix into one NV buffer per column, for cor()'s matrix
 branch.  rows[] holds the nrows row AVs, already validated as array refs;
 cols[j] must have room for nrows values; rowbuf is scratch for ncols values.
@@ -4802,14 +4895,10 @@ through a NaN, so an incomplete pair makes the whole entry NaN, which is what
 R's cor() does at its default use = "everything".  cov() and cor_test() are
 the ones that compact to the pairwise-complete observations first.
 
-rows[] holds borrowed AV pointers, not counted references, so perl code run
-from inside a cell (a tied FETCH, an overloaded 0+, a __WARN__ handler on a
-non-numeric string) that empties the outer array leaves the later entries
-dangling.  The av_fetch()-per-cell loop this replaces was no safer -- it read
-row i back through the outer array without re-checking that the slot was still
-a reference, so the same callback took it through SvRV(NULL) instead.  Making
-it actually safe means holding a reference per row, which is nrows refcount
-pairs for a case no ordinary input reaches; it is left as it was found.*/
+rows[] must be held by the caller (row_keep()): perl code run from inside a
+cell (a tied FETCH, an overloaded 0+, a __WARN__ handler on a non-numeric
+string) can empty the outer array, which up to 0.341 left the later entries
+dangling.*/
 static void cor_extract_cols(pTHX_ AV *const *restrict rows, size_t nrows,
 	NV *const *restrict cols, size_t ncols, NV *restrict rowbuf)
 {
@@ -6726,6 +6815,18 @@ static SV *wt_got(pTHX_ SV *sv) {
 	return sv;
 }
 
+/*The container a frame's row or column refers to, its get magic run again,
+held to the end of the enclosing scope.  The shape pass checked that it is a
+reference to type t, but a tied value is fetched afresh at each read and a
+cell's FETCH can replace it, and up to 0.341 each later read took SvRV() of
+whatever came back.*/
+static SV *wt_ref_again(pTHX_ SV *sv, svtype t, SV *who) {
+	SV *v = wt_got(aTHX_ sv);
+	if (!v || !SvROK(v) || SvTYPE(SvRV(v)) != t)
+		croak("%" SVf ": the data frame changed while it was being written\n", SVfARG(who));
+	return sv_hold(aTHX_ SvRV(v));
+}
+
 /*The system's text for errnum, as $! gives it, in a mortal SV.
 
 It is read back through $! itself rather than from strerror(): strerror() is
@@ -7077,9 +7178,15 @@ static void tex_escape_sv(pTHX_ SV *out, const char *s, STRLEN len, bool is_utf8
 static SV *provenance_path(pTHX) {
 	SV *out = sv_2mortal(newSVpvs(""));
 	bool have = 0;
-// cwd via Cwd::getcwd() -- load Cwd (core) if it is not already in.
-	if (!get_cv("Cwd::getcwd", 0))
+/* cwd via Cwd::getcwd() -- load Cwd (core) if it is not already in.  $@ is
+  local to the load: Cwd.pm runs evals as it compiles, and up to 0.341 the first
+  .tex or .xlsx write_table() of a program cleared the caller's $@.*/
+	if (!get_cv("Cwd::getcwd", 0)) {
+		ENTER;
+		save_scalar(PL_errgv);
 		load_module(PERL_LOADMOD_NOIMPORT, newSVpvs("Cwd"), NULL);
+		LEAVE;
+	}
 	if (get_cv("Cwd::getcwd", 0)) {
 		dSP;
 		ENTER; SAVETMPS;
@@ -7129,13 +7236,50 @@ static SV *tex_written_by(pTHX) {
 	return out;
 }
 
-/* The xlsx provenance string "written by <cwd>/<script>" for the workbook's
- document "comments" property; a generic line when no path is available.*/
-static SV *xlsx_written_by(pTHX) {
+/*The xlsx provenance for the workbook's document "comments" property: "written
+by <cwd>/<script>" (a generic line when no path is available), then the "user:",
+"host:", "perl:" and "Stats::LikeR:" lines of Stats::LikeR::_xlsx_provenance().
+*author gets the login name as a mortal SV, or NULL when there is none, for
+dc:creator and cp:lastModifiedBy -- the "Author" and "Last modified by" Excel
+shows.  The lookups are in perl because getpwuid() is in reentr.h's list and
+gethostname() is not on every platform; perl has ported both.*/
+/*A byte string from the system -- a path, a login or host name -- as text:
+UTF-8 when its bytes are valid UTF-8, which is what a UTF-8 locale gives,
+and Latin-1 otherwise, which is what SvPVutf8() then assumes.  Up to 0.341 every
+one was taken for Latin-1, and a login name "jos\xc3\xa9" was written "JosÃ©".*/
+static void sys_bytes_as_text(pTHX_ SV *sv) {
+	if (!sv || SvUTF8(sv) || !SvPOK(sv)) return;
+	if (is_utf8_string((const U8*)SvPVX_const(sv), SvCUR(sv))) SvUTF8_on(sv);
+}
+static SV *xlsx_written_by(pTHX_ SV **author) {
 	SV *path = provenance_path(aTHX);
 	SV *out = sv_2mortal(newSVpvs("written by "));
+	sys_bytes_as_text(aTHX_ path);	//before the concatenation below upgrades it as Latin-1
 	if (path) sv_catsv(out, path);
 	else      sv_catpvn(out, "Stats::LikeR write_table", 24);
+	*author = NULL;
+	dSP;
+	ENTER;
+	SAVETMPS;
+	PUSHMARK(SP);
+	PUTBACK;
+	const I32 cnt = call_pv("Stats::LikeR::_xlsx_provenance", G_ARRAY);
+	SPAGAIN;
+	SV *lines = cnt == 2 ? POPs : NULL;
+	SV *user  = cnt == 2 ? POPs : NULL;
+	if (cnt != 2) SP -= cnt;
+	if (lines && SvOK(lines) && SvCUR(lines)) {
+		SV *l = sv_mortalcopy(lines);	//a copy: the flag is set on it, not on the sub's return
+		sys_bytes_as_text(aTHX_ l);
+		sv_catpvs(out, "\n");
+		sv_catsv(out, l);
+	}
+	SV *who = (user && SvOK(user)) ? newSVsv(user) : NULL;	// copied out before FREETMPS frees the returns
+	sys_bytes_as_text(aTHX_ who);
+	PUTBACK;
+	FREETMPS;
+	LEAVE;
+	if (who) *author = sv_2mortal(who);	// only now: made mortal inside SAVETMPS, FREETMPS would have freed it
 	return out;
 }
 
@@ -7742,8 +7886,8 @@ UTF-8 SVs, in the order they are written).  *slot gets the handle, so that a
 croak before wt_xlsx_finish() closes it.  The worksheets follow, each between
 wt_xlsx_sheet_begin() and wt_xlsx_sheet_end().*/
 static void wt_xlsx_begin(pTHX_ WtXlsx *restrict X, PerlIO **slot, const char *file,
-	AV *names, SV *comment){
-	// document properties: provenance goes in the "comments" field
+	AV *names, SV *comment, SV *author){
+	// document properties: provenance goes in the "comments" field, the login name (author) in the two author fields
 	SV *core = sv_2mortal(newSVpvs(
 		"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
 		"<cp:coreProperties "
@@ -7752,9 +7896,14 @@ static void wt_xlsx_begin(pTHX_ WtXlsx *restrict X, PerlIO **slot, const char *f
 		"xmlns:dcterms=\"http://purl.org/dc/terms/\" "
 		"xmlns:dcmitype=\"http://purl.org/dc/dcmitype/\" "
 		"xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\">"
-		"<dc:creator>Stats::LikeR</dc:creator>"
-		"<cp:lastModifiedBy>Stats::LikeR</cp:lastModifiedBy>"
-		"<dc:description>"));
+		"<dc:creator>"));
+	const char *as = "Stats::LikeR";	// when no login name was found
+	STRLEN al = sizeof("Stats::LikeR") - 1;
+	if (author) as = SvPVutf8(author, al);
+	xlsx_xml_cat(aTHX_ core, as, al, FALSE);
+	SV_CATLIT(core, "</dc:creator><cp:lastModifiedBy>");
+	xlsx_xml_cat(aTHX_ core, as, al, FALSE);
+	SV_CATLIT(core, "</cp:lastModifiedBy><dc:description>");
 	if (comment && SvOK(comment)) {
 		STRLEN dl; const char *ds = SvPVutf8(comment, dl);
 		xlsx_xml_cat(aTHX_ core, ds, dl, FALSE);
@@ -8139,7 +8288,9 @@ static void wt_frame_shape(pTHX_ WtFrame *restrict F, const WtOpts *restrict O) 
 						ITER_KEEP_BEGIN(hv);
 						hv_iterinit(hv);
 						while (!clash && (entry = hv_iternext(hv))) {
-							if (hv_exists_ent((HV*)SvRV(wt_got(aTHX_ hv_iterval(hv, entry))), row_names_sv, 0)) clash = 1;
+							ENTER;	// the hold is a row's only
+							if (hv_exists_ent((HV*)wt_ref_again(aTHX_ hv_iterval(hv, entry), SVt_PVHV, who), row_names_sv, 0)) clash = 1;
+							LEAVE;
 						}
 						ITER_KEEP_END;
 					}
@@ -8213,7 +8364,7 @@ static void wt_frame_shape(pTHX_ WtFrame *restrict F, const WtOpts *restrict O) 
 		if (col_names_sv && SvOK(col_names_sv)) names = (AV*)SvRV(col_names_sv);
 		else if (is_aoa) {	// row 0 was checked to be an ARRAY reference above
 			SV **h0 = av_fetch((AV*)data_ref, 0, 0);
-			if (h0) names = (AV*)SvRV(wt_got(aTHX_ *h0));
+			if (h0) names = (AV*)wt_ref_again(aTHX_ *h0, SVt_PVAV, who);
 		}
 		if (names) {
 			for (SSize_t i = 0; !clash && i <= av_len(names); i++) {
@@ -8293,13 +8444,13 @@ static void wt_frame_write(pTHX_ WtFrame *restrict F, const WtOpts *restrict O, 
 			hv_iterinit((HV*)data_ref);
 			HE *entry;
 			while ((entry = hv_iternext((HV*)data_ref))) {
-				HV *inner = (HV*)SvRV(wt_got(aTHX_ hv_iterval((HV*)data_ref, entry)));
 /* The keys of a tied or UTF-8 row are taken through mortal SVs, and nothing
   frees a mortal until the call returns: one SV per cell of the table, 212 MB
   over the data's own for a 200000 x 20 HoH, when every key went that way.
-  The scope frees them a row at a time, and the lvalue fetch in
-  wt_collect_keys() makes a column's entry only when it is new. */
+  The scope frees them a row at a time, and the row's hold with them; the lvalue
+  fetch in wt_collect_keys() makes a column's entry only when it is new. */
 				ENTER; SAVETMPS;
+				HV *inner = (HV*)wt_ref_again(aTHX_ hv_iterval((HV*)data_ref, entry), SVt_PVHV, who);
 				wt_collect_keys(aTHX_ col_map, inner);
 				FREETMPS; LEAVE;
 			}
@@ -8347,7 +8498,7 @@ static void wt_frame_write(pTHX_ WtFrame *restrict F, const WtOpts *restrict O, 
 			}
 			HE *inner_he = hv_fetch_ent(data_hv, row_key_sv, 0, 0);
 			SV *inner_sv = inner_he ? wt_got(aTHX_ HeVAL(inner_he)) : NULL;
-			HV *inner_hv = (inner_sv && SvROK(inner_sv)) ? (HV*)SvRV(inner_sv) : NULL;
+			HV *inner_hv = (inner_sv && SvROK(inner_sv) && SvTYPE(SvRV(inner_sv)) == SVt_PVHV) ? (HV*)sv_hold(aTHX_ SvRV(inner_sv)) : NULL;	// held to LEAVE, as an AoA row is
 			for (size_t j = 0; j < num_headers; j++) {
 				SV **h_ptr = av_fetch(headers_av, (SSize_t)j, 0);
 				SV *h_sv = (h_ptr && SvOK(*h_ptr)) ? *h_ptr : NULL;
@@ -8437,7 +8588,7 @@ static void wt_frame_write(pTHX_ WtFrame *restrict F, const WtOpts *restrict O, 
 			SV *h_sv = (h_ptr && SvOK(*h_ptr)) ? *h_ptr : NULL;
 			HE *arr_he = h_sv ? wt_fetch(aTHX_ data_hv, h_sv) : NULL;
 			SV *arr_sv = arr_he ? wt_got(aTHX_ HeVAL(arr_he)) : NULL;
-			col_avs[j] = (arr_sv && SvROK(arr_sv)) ? (AV*)SvRV(arr_sv) : NULL;
+			col_avs[j] = (arr_sv && SvROK(arr_sv) && SvTYPE(SvRV(arr_sv)) == SVt_PVAV) ? (AV*)sv_hold(aTHX_ SvRV(arr_sv)) : NULL;	// held: a cell's FETCH can delete the column
 			const size_t len = col_avs[j] ? (size_t)(av_len(col_avs[j]) + 1) : 0;
 			if (len > max_rows) max_rows = len;
 		}
@@ -8445,7 +8596,7 @@ static void wt_frame_write(pTHX_ WtFrame *restrict F, const WtOpts *restrict O, 
 		if (rownames_col) {
 			HE *rn_he = hv_fetch_ent(data_hv, row_names_sv, 0, 0);
 			SV *rn_sv = rn_he ? wt_got(aTHX_ HeVAL(rn_he)) : NULL;
-			rn_av = (rn_sv && SvROK(rn_sv)) ? (AV*)SvRV(rn_sv) : NULL;
+			rn_av = (rn_sv && SvROK(rn_sv) && SvTYPE(SvRV(rn_sv)) == SVt_PVAV) ? (AV*)sv_hold(aTHX_ SvRV(rn_sv)) : NULL;
 			const size_t len = rn_av ? (size_t)(av_len(rn_av) + 1) : 0;
 			if (len > max_rows) max_rows = len;
 		}
@@ -8483,8 +8634,8 @@ static void wt_frame_write(pTHX_ WtFrame *restrict F, const WtOpts *restrict O, 
 				ENTER; SAVETMPS;	// the key copies wt_collect_keys() can make: see the HoH branch
 				SV **row_ptr = av_fetch(data_av, (SSize_t)i, 0);
 				SV *row_sv = row_ptr ? wt_got(aTHX_ *row_ptr) : NULL;
-				if (row_sv && SvROK(row_sv))
-					wt_collect_keys(aTHX_ col_map, (HV*)SvRV(row_sv));
+				if (row_sv && SvROK(row_sv) && SvTYPE(SvRV(row_sv)) == SVt_PVHV)	// the type again: a FETCH can replace a row
+					wt_collect_keys(aTHX_ col_map, (HV*)sv_hold(aTHX_ SvRV(row_sv)));
 				FREETMPS; LEAVE;
 			}
 /* UTF-8 safety: keep the key SVs (flags intact) and sort
@@ -8523,7 +8674,8 @@ static void wt_frame_write(pTHX_ WtFrame *restrict F, const WtOpts *restrict O, 
 			R.n = 0;
 			SV **row_ptr = av_fetch(data_av, (SSize_t)i, 0);
 			SV *row_sv = row_ptr ? wt_got(aTHX_ *row_ptr) : NULL;
-			HV *row_hv = (row_sv && SvROK(row_sv)) ? (HV*)SvRV(row_sv) : NULL;
+			HV *row_hv = (row_sv && SvROK(row_sv) && SvTYPE(SvRV(row_sv)) == SVt_PVHV)
+				? (HV*)sv_hold(aTHX_ SvRV(row_sv)) : NULL;	// type and hold: a cell's FETCH can replace the row
 			if (inc_rownames) {
 				if (rownames_col) {
 					HE *rn_he = row_hv ? wt_fetch(aTHX_ row_hv, row_names_sv) : NULL;
@@ -8554,7 +8706,8 @@ static void wt_frame_write(pTHX_ WtFrame *restrict F, const WtOpts *restrict O, 
 		} else {
 			SV **h0 = av_fetch(data_av, 0, 0);
 			SV *h0_sv = h0 ? wt_got(aTHX_ *h0) : NULL;
-			AV *h_av = (h0_sv && SvROK(h0_sv)) ? (AV*)SvRV(h0_sv) : NULL;
+			AV *h_av = (h0_sv && SvROK(h0_sv) && SvTYPE(SvRV(h0_sv)) == SVt_PVAV)
+				? (AV*)sv_hold(aTHX_ SvRV(h0_sv)) : NULL;	// held: a header cell's FETCH can replace the row
 			if (h_av) {
 				for (SSize_t i = 0; i <= av_len(h_av); i++) {
 					SV **c = av_fetch(h_av, i, 0);
@@ -8581,7 +8734,7 @@ static void wt_frame_write(pTHX_ WtFrame *restrict F, const WtOpts *restrict O, 
 		for (SSize_t r = data_start; r <= last; r++) {
 			SV **row_ptr = av_fetch(data_av, r, 0);
 			SV *row_sv = row_ptr ? wt_got(aTHX_ *row_ptr) : NULL;
-			if (!row_sv || !SvROK(row_sv)) continue;
+			if (!row_sv || !SvROK(row_sv) || SvTYPE(SvRV(row_sv)) != SVt_PVAV) continue;	// a tied row is fetched afresh
 			const size_t w = (size_t)(av_len((AV*)SvRV(row_sv)) + 1);
 			if (w > header_width && n_long++ == 0) {
 				first_long = (size_t)(r - data_start) + 1;
@@ -8608,7 +8761,7 @@ static void wt_frame_write(pTHX_ WtFrame *restrict F, const WtOpts *restrict O, 
 			}
 			SV **row_ptr = av_fetch(data_av, r, 0);
 			SV *row_sv = row_ptr ? wt_got(aTHX_ *row_ptr) : NULL;
-			AV *row_av = (row_sv && SvROK(row_sv)) ? (AV*)SvRV(row_sv) : NULL;
+			AV *row_av = (row_sv && SvROK(row_sv) && SvTYPE(SvRV(row_sv)) == SVt_PVAV) ? (AV*)sv_hold(aTHX_ SvRV(row_sv)) : NULL;	// held to LEAVE: a cell's FETCH can replace the row
 			for (size_t j = 0; j < num_headers; j++) {
 				SV **cell_ptr = row_av ? av_fetch(row_av, (SSize_t)j, 0) : NULL;
 				wt_cell(aTHX_ &R, cell_ptr ? *cell_ptr : NULL, undef_val, undef_len);
@@ -8756,13 +8909,17 @@ static bool wt_is_book(pTHX_ HV *hv) {
 openpyxl 3.1.5 did before them (the title setter in openpyxl/workbook/child.py):
 an empty name, one holding any of \ * ? : / [ ], and one starting or ending
 with an apostrophe are refused.  Excel refuses all of these.  The apostrophe
-was let through up to 0.34.
+was let through up to 0.34.  So is a character XML 1.0 cannot hold
+(xlsx_escaped_char()): xlsx_xml_cat() drops it from workbook.xml, and up to
+0.341 that turned "a\x01" beside "a" into two sheets named "a", and "\x02"
+into an empty name, past both checks; a surrogate died in lc() instead.
 
 A name longer than 31 characters is warned about rather than refused, as
 openpyxl does -- "Some applications may not be able to read the file", Excel
 first among them; both writers refuse it -- and the return says whether this one
-is.  key says where the name came from: a key of the workbook hash, or
-'xlsx_sheet'.*/
+is.  Excel counts UTF-16 code units, so a character past U+FFFF counts two; up
+to 0.341 it counted one, and 16 emoji passed.  key says where the name came
+from: a key of the workbook hash, or 'xlsx_sheet'.*/
 static bool wt_sheet_name_check(pTHX_ SV *name, bool key) {
 	STRLEN snl;
 	const char *sn = SvPVutf8(name, snl);	// already UTF-8, so a no-op that says so; no restrict: a PV perl may share (COW)
@@ -8779,7 +8936,19 @@ static bool wt_sheet_name_check(pTHX_ SV *name, bool key) {
 		if (key) croak("write_table: worksheet name '%" SVf "' may not start or end with an apostrophe\n", SVfARG(name));
 		usage_croak(aTHX_ "write_table", "'xlsx_sheet' may not start or end with an apostrophe");
 	}
-	return utf8_length((const U8*)sn, (const U8*)sn + snl) > 31;
+	STRLEN units = 0;	//UTF-16 code units, which is what Excel's 31 counts
+	for (STRLEN i = 0; i < snl; i++) {
+		UV unit;
+		if (xlsx_escaped_char(sn + i, snl - i, &unit)) {
+			if (key) croak("write_table: worksheet name '%" SVf "' may not contain U+%04" UVXf
+				", which XML cannot hold\n", SVfARG(name), unit);
+			usage_croak(aTHX_ "write_table", "'xlsx_sheet' may not contain U+%04" UVXf
+				", which XML cannot hold", unit);
+		}
+		const U8 c = (U8)sn[i];
+		if ((c & 0xC0) != 0x80) units += c >= 0xF0 ? 2 : 1;	//a lead byte: four bytes or more is past U+FFFF
+	}
+	return units > 31;
 }
 
 /*Refuse a workbook two of whose worksheet names are the same with case ignored,
@@ -19167,12 +19336,14 @@ static void mg_resolve(pTHX_ const mg_frame *f, SV *name, mg_col *c) {
 	if (!f->hoa) return;
 	HE *e = hv_fetch_ent(f->cols, name, 0, 0);
 	if (!e) return;
-	/*A tied frame's value is a placeholder until fetched; it is a mortal, which
-	keeps the column alive for the rest of the join.*/
+	/*A tied frame's value is a placeholder until fetched.  The column is held
+	for the rest of the join: a plain frame's value is the caller's own, and a
+	tied cell's FETCH could delete the column from it, which up to 0.341 left
+	c->av dangling.*/
 	SV *v = HeVAL(e);
 	SvGETMAGIC(v);
 	if (SvROK(v) && SvTYPE(SvRV(v)) == SVt_PVAV)
-		c->av = (AV *)SvRV(v);
+		c->av = (AV *)sv_hold(aTHX_ SvRV(v));
 }
 
 /*The cell at (row, column), or NULL when the frame has none there.
@@ -23050,7 +23221,7 @@ static void ag_set_init(pTHX_ ag_set *restrict s, short int shape, AV *ids, HV *
 			SV *cv = ce ? HeVAL(ce) : NULL;
 			if (cv) SvGETMAGIC(cv);	// a tied frame's value is only fetched here
 			s->col[j] = (cv && SvROK(cv) && SvTYPE(SvRV(cv)) == SVt_PVAV)
-			          ? (AV *)SvRV(cv) : NULL;
+			          ? (AV *)sv_hold(aTHX_ SvRV(cv)) : NULL;	// held: a cell's FETCH can delete the column
 		}
 	}
 }
@@ -23619,6 +23790,7 @@ _agg_split(df, shape, by, cols, how)
 		const svtype want = shape == 3 ? SVt_PVAV : SVt_PVHV;
 		Newx(rows, n > 0 ? n : 1, SV *);
 		SAVEFREEPV(rows);
+		AV *keep = (AV *)sv_2mortal((SV *)newAV());	//each row held as it is taken: a FETCH can free one
 		for (SSize_t i = 0; i < n; i++) {
 			SV *rv = av_at(aTHX_ src, i);
 			if (!rv) continue;
@@ -23628,6 +23800,7 @@ _agg_split(df, shape, by, cols, how)
 				croak("agg: row %" IVdf " is not %s reference", (IV)i,
 				      shape == 3 ? "an ARRAY" : "a HASH");
 			rows[R++] = SvRV(rv);
+			av_push(keep, SvREFCNT_inc_simple_NN(SvRV(rv)));
 		}
 	}
 	//pass 1: the group of every row, and each group's by-values
@@ -25422,7 +25595,19 @@ ITER_KEEP_END, so the count is read in one scope and the walk runs in a second.*
 				SV *kr = NULL;	//the result's reference to the row: its own, not the frame's
 				const short int k = prog ? flt_row_hv(aTHX_ prog, rh) : -1;	// 1 keep, 0 drop, -1 ask the closure
 				if (k > 0) kr = newRV_inc((SV*)rh);
-				else if (k < 0) (void)filt_call(aTHX_ code, rh, e, 0, &kr);
+				else if (k < 0) {
+					/*The key is taken before the closure runs, which can delete
+					  e's entry or clear the frame; up to 0.341 HePV(e) read it
+					  freed afterwards.  It is a copy because a tied frame's iterator
+					  hands back one key SV that the closure's own walk would
+					  overwrite; the scope frees it a row at a time.*/
+					ENTER; SAVETMPS;
+					SV *ksv = outh ? sv_mortalcopy(hv_iterkeysv(e)) : NULL;
+					(void)filt_call(aTHX_ code, rh, e, 0, &kr);
+					if (kr && outh) (void)hv_store_ent(outh, ksv, kr, 0);
+					FREETMPS; LEAVE;
+					if (kr && outh) continue;
+				}
 				if (!kr) continue;
 				if (outh) {
 					STRLEN kl; const char *k = HePV(e, kl);
@@ -25828,15 +26013,25 @@ SV *oneway_test(...)
 			k = (size_t)(av_len(in_av) + 1); //+1 inside the signed math
 			if (k < 2)
 				croak("oneway_test: need at least 2 groups, got %" UVuf, (UV)k);
+			AV **gav;	//each group's array, held: the second pass reads these, never in_av again
 			Newx(sizes, k, size_t);
 			SAVEFREEPV(sizes);
+			Newx(gav, k, AV *);
+			SAVEFREEPV(gav);
 			size_t total_n = 0;	//cells before NaN is dropped: what flat is sized by
-			//first pass: validate, total size, synthesised names
+			/*First pass: validate, size, synthesised names.  sizes[g] holds the
+			group's length until the second pass counts into it.  A tied cell's
+			FETCH runs in the second pass and can grow a group or replace one,
+			which overran flat and dereferenced a non-reference up to 0.341, so
+			each array is held and read only to the length measured here.*/
 			for (size_t g = 0; g < k; g++) {
 				SV **val = av_fetch(in_av, (SSize_t)g, 0);
 				if (!val || !*val || !SvROK(*val) || SvTYPE(SvRV(*val)) != SVt_PVAV)
 					croak("oneway_test: index %" UVuf " is not an array reference", (UV)g);
-				total_n += (size_t)(av_len((AV *)SvRV(*val)) + 1);
+				gav[g] = (AV *)SvREFCNT_inc_simple_NN(SvRV(*val));
+				SAVEFREESV(gav[g]);
+				sizes[g] = (size_t)(av_len(gav[g]) + 1);
+				total_n += sizes[g];
 				//a group LABEL that is returned to the caller, not a message
 				av_push(names, newSVpvf("Index %" UVuf, (UV)g));
 			}
@@ -25845,8 +26040,8 @@ SV *oneway_test(...)
 			SAVEFREEPV(flat);
 			size_t offset = 0;
 			for (size_t g = 0; g < k; g++) {
-				AV *av = (AV *)SvRV(*av_fetch(in_av, (SSize_t)g, 0));	//the first pass checked it: an ARRAY ref, not a hole
-				const SSize_t len = av_len(av) + 1;
+				AV *av = gav[g];
+				const SSize_t len = (SSize_t)sizes[g];
 				sizes[g] = 0;
 				for (SSize_t i = 0; i < len; i++) {
 					const short int got = owt_cell(aTHX_ av_fetch(av, i, 0), &flat[offset]);
@@ -25892,8 +26087,13 @@ SV *oneway_test(...)
 					|| SvTYPE(SvRV(fact_sv)) != SVt_PVAV)
 				croak("oneway_test: formula RHS '%s' not found as an array ref in the hash", rhs);
 
-			AV *resp_av  = (AV *)SvRV(resp_sv);
-			AV *label_av = (AV *)SvRV(fact_sv);
+			/*Held: a tied cell's FETCH in owt_formula_groups() could replace a
+			column in the hash and free it.  That reads to the length n taken
+			here, so a column that grows cannot overrun flat.*/
+			AV *resp_av  = (AV *)SvREFCNT_inc_simple_NN(SvRV(resp_sv));
+			SAVEFREESV(resp_av);
+			AV *label_av = (AV *)SvREFCNT_inc_simple_NN(SvRV(fact_sv));
+			SAVEFREESV(label_av);
 			const SSize_t n = av_len(resp_av) + 1;
 			Newx(flat,  n > 0 ? (size_t)n : 1, NV);
 			SAVEFREEPV(flat);
@@ -25904,7 +26104,7 @@ SV *oneway_test(...)
 			k = hv_nkeys(aTHX_ in_hv); //robust count, not iterinit's (which reads 0 for a tied hash)
 			if (k < 2)
 				croak("oneway_test: need at least 2 groups, got %" UVuf, (UV)k);
-			AV **gav;	//each group's array, so the second pass need not walk the hash again
+			AV **gav;	//each group's array, held, so the second pass need not walk the hash again
 			Newx(sizes, k, size_t);
 			SAVEFREEPV(sizes);
 			Newx(gav,   k, AV *);
@@ -25925,8 +26125,11 @@ SV *oneway_test(...)
 					hv_walk_out(aTHX_ in_hv);
 					croak("oneway_test: value for group '%" SVf "' is not an array ref", SVfARG(key));
 				}
-				total_n += (size_t)(av_len((AV *)SvRV(val)) + 1);
-				gav[g] = (AV *)SvRV(val);	//val is a mortal for a tied hash, so the array outlives the walk
+				//held, so a tied cell's FETCH that replaces the group cannot free it; see the AoA mode
+				gav[g] = (AV *)SvREFCNT_inc_simple_NN(SvRV(val));
+				SAVEFREESV(gav[g]);
+				sizes[g] = (size_t)(av_len(gav[g]) + 1);	//the length the second pass reads to
+				total_n += sizes[g];
 				ng = g + 1;
 			}
 			ITER_KEEP_END;
@@ -25938,7 +26141,7 @@ SV *oneway_test(...)
 			SAVEFREEPV(flat);
 			size_t offset = 0;
 			for (size_t g = 0; g < k; g++) {
-				const SSize_t len = av_len(gav[g]) + 1;
+				const SSize_t len = (SSize_t)sizes[g];
 				sizes[g] = 0;
 				for (SSize_t i = 0; i < len; i++) {
 					const short int got = owt_cell(aTHX_ av_fetch(gav[g], i, 0), &flat[offset]);
@@ -27535,11 +27738,15 @@ PPCODE:
 			SV *name = AvARRAY(names)[i];
 			HE *he = hv_fetch_ent((HV*)data_ref, name, 0, 0);
 			SV *v = frame_untied(aTHX_ wt_got(aTHX_ HeVAL(he)), 0);	// a key just read from the hash: it is there
-			frames[i].data_ref = SvRV(v);
+			/*Held: a cell's FETCH on an earlier sheet could delete this one
+			from the hash and free it before its turn.*/
+			frames[i].data_ref = SvREFCNT_inc_simple_NN(SvRV(v));
+			SAVEFREESV(frames[i].data_ref);
 			frames[i].who = sv_2mortal(newSVpvf("write_table: sheet '%" SVf "'", SVfARG(name)));
 		}
 	} else {
-		frames[0].data_ref = data_ref;
+		frames[0].data_ref = SvREFCNT_inc_simple_NN(data_ref);	//held, as a sheet is above
+		SAVEFREESV(frames[0].data_ref);
 		frames[0].who = sv_2mortal(newSVpvs("write_table"));
 	}
 	WtOpts O;
@@ -27573,7 +27780,8 @@ PPCODE:
 	if (xlsx) {
 /* The provenance line goes into the workbook's document "comments" property
   (dc:description), with any user-supplied xlsx_comment line(s) appended after it.*/
-		SV *prov = xlsx_written_by(aTHX);
+		SV *author;
+		SV *prov = xlsx_written_by(aTHX_ &author);
 		const unsigned short int comment_kind = wt_comment_kind(aTHX_ xlsx_comment, "xlsx_comment");
 		if (comment_kind == 2) {
 			AV *ca = (AV*)SvRV(xlsx_comment);
@@ -27584,7 +27792,7 @@ PPCODE:
 		} else if (comment_kind == 1) {
 			SV_CATLIT(prov, "\n"); sv_catsv(prov, xlsx_comment);
 		}
-		wt_xlsx_begin(aTHX_ &X, fhp, file, names, prov);
+		wt_xlsx_begin(aTHX_ &X, fhp, file, names, prov, author);
 		S.xlsx = &X;
 	} else if (collect) {
 		collect_av = (AV*)sv_2mortal((SV*)newAV());
@@ -28290,8 +28498,8 @@ SV* cov(...)
 		else if (strEQ(method, "spearman")) meth = 1;
 		else if (strEQ(method, "kendall"))  meth = 2;
 		else usage_croak(aTHX_ "cov", "unknown method '%s' (use 'pearson', 'spearman', or 'kendall')", method);
-		AV *x_av = (AV*)SvRV(x_sv);
-		AV *y_av = (AV*)SvRV(y_sv);
+		AV *x_av = (AV*)sv_hold(aTHX_ SvRV(x_sv));	// held: a cell's FETCH can drop the caller's last reference
+		AV *y_av = (AV*)sv_hold(aTHX_ SvRV(y_sv));
 		size_t nx = av_len(x_av) + 1, ny = av_len(y_av) + 1;
 		if (nx != ny) {
 			croak("cov: incompatible dimensions (x has %" UVuf ", y has %" UVuf ")",
@@ -31384,17 +31592,20 @@ CODE:
 		!SvOK(y_ref) || !SvROK(y_ref) || SvTYPE(SvRV(y_ref)) != SVt_PVAV) {
 		usage_croak(aTHX_ "cor_test", "x and y must be array references");
 	}
-	x_av = (AV*)SvRV(x_ref);
-	y_av = (AV*)SvRV(y_ref);
+	x_av = (AV*)sv_hold(aTHX_ SvRV(x_ref));	// held: a cell's FETCH can drop the caller's last reference
+	y_av = (AV*)sv_hold(aTHX_ SvRV(y_ref));
 	size_t n_raw = av_len(x_av) + 1;
 	if (n_raw != (size_t)(av_len(y_av) + 1)) croak("incompatible dimensions");
 	x = safemalloc(n_raw * sizeof(NV));
 	y = safemalloc(n_raw * sizeof(NV));
 	size_t n = 0; //Final count of pairwise complete observations
 	for (size_t i = 0; i < n_raw; i++) {
+		/*y's slot is fetched only once x's cell has been read: a FETCH on x
+		that grows y moves y's storage, and up to 0.341 y_val then pointed
+		into the freed array.*/
 		SV **x_val = av_fetch(x_av, i, 0);
-		SV **y_val = av_fetch(y_av, i, 0);
 		NV xv = (x_val && SvOK(*x_val) && looks_like_number(*x_val)) ? SvNV(*x_val) : NAN;
+		SV **y_val = av_fetch(y_av, i, 0);
 		NV yv = (y_val && SvOK(*y_val) && looks_like_number(*y_val)) ? SvNV(*y_val) : NAN;
 		if (!nv_isnan(xv) && !nv_isnan(yv)) {//Pairwise complete observations (skips NAs like R)
 			x[n] = xv;
@@ -35110,6 +35321,7 @@ void p_adjust(...)
 		if (!ref || (SvTYPE(ref) != SVt_PVAV && SvTYPE(ref) != SVt_PVHV))
 			usage_croak(aTHX_ "p_adjust", "first argument must be an ARRAY reference of p-values, "
 			            "or a reference to an AoA, AoH, HoA or HoH data frame");
+		pa_hold(aTHX_ ref);	//a cell's FETCH could drop the caller's last reference to the frame
 		if (SvTYPE(ref) == SVt_PVAV) {
 			AV *av = (AV*)ref;
 			for (SSize_t i = 0; i <= av_len(av); i++) {
@@ -35156,8 +35368,8 @@ void p_adjust(...)
 			size_t n = av_len(p_av) + 1;
 			if (n == 0) XSRETURN_EMPTY;
 			NV *pv, *adj;
-			Newx(pv, n, NV);
-			Newx(adj, n, NV);
+			Newx(pv, n, NV);  SAVEFREEPV(pv);	//on the save stack: a cell's FETCH or overloading can die
+			Newx(adj, n, NV); SAVEFREEPV(adj);
 			for (size_t i = 0; i < n; i++) {
 				SV **tv = av_fetch(p_av, i, 0);
 				pv[i] = (tv && SvOK(*tv)) ? SvNV(*tv) : 1.0;
@@ -35165,8 +35377,6 @@ void p_adjust(...)
 			pa_kernel(pv, adj, n, meth);
 			EXTEND(SP, (SSize_t)n);
 			for (size_t i = 0; i < n; i++) ST(i) = sv_2mortal(newSVnv(adj[i]));
-			Safefree(pv);  pv  = NULL;
-			Safefree(adj); adj = NULL;
 			XSRETURN((int)n);
 		}
 		/* a frame: validate and size the family before building anything,
@@ -35295,13 +35505,23 @@ void p_adjust(...)
 					croak("p_adjust: the frame has no column named '%s'",
 					      HePV(e, PL_na));
 		}
-		//---- second pass: rebuild the frame, reserving a slot per p-value
+		/*---- second pass: rebuild the frame, reserving a slot per p-value.
+		  A tied cell's FETCH runs in this pass (pa_place()'s SvNV()), and can grow,
+		  shrink or replace any row or column of the frame.  Up to 0.341 that
+		  dereferenced a row it had replaced with a number, and a family that came out
+		  smaller than n left slots[] holding garbage for sv_setnv() below.  So every
+		  row and column is checked again here, the family must come out at n, and
+		  the buffers are on the save stack for the croak that says it did not.*/
 		NV *pv     = NULL, *adj    = NULL;
 		SV **slots = NULL;
 		PaEnt *kbuf = NULL, *obuf  = NULL;
-		if (n) { Newx(pv, n, NV); Newx(adj, n, NV); Newx(slots, n, SV*); }
-		if (maxk)   Newx(kbuf, maxk,   PaEnt);
-		if (nouter) Newx(obuf, nouter, PaEnt);
+		if (n) {
+			Newx(pv, n, NV);     SAVEFREEPV(pv);
+			Newx(adj, n, NV);    SAVEFREEPV(adj);
+			Newx(slots, n, SV*); SAVEFREEPV(slots);
+		}
+		if (maxk)   { Newx(kbuf, maxk,   PaEnt); SAVEFREEPV(kbuf); }
+		if (nouter) { Newx(obuf, nouter, PaEnt); SAVEFREEPV(obuf); }
 		size_t k = 0;
 		SV *out_sv;
 		if (kind == PA_AOA) {
@@ -35311,23 +35531,29 @@ void p_adjust(...)
 			if (nr > 0) av_extend(out, nr - 1);
 			for (SSize_t i = 0; i < nr; i++) {
 				SV **rs = av_fetch(in, i, 0);
-				AV *row = (AV*)SvRV(*rs);	//the first pass croaked on a hole or a non-ARRAY row
+				if (!rs || !SvROK(*rs) || SvTYPE(SvRV(*rs)) != SVt_PVAV) PA_CHANGED();
+				AV *row = (AV*)SvRV(*rs);
+				ENTER; SAVETMPS;	//the holds below last for this row only
+				pa_hold(aTHX_ (SV*)row);
 				AV *rout = newAV();
 				av_push(out, newRV_noinc((SV*)rout));
 				SSize_t nc = av_len(row) + 1;
 				if (nc > 0) av_extend(rout, nc - 1);
 				for (SSize_t j = 0; j < nc; j++) {
 					SV **c = av_fetch(row, j, 0);
-					int sel = 1;
+					SV *cell = c ? *c : NULL;
+					pa_hold(aTHX_ cell);
+					bool sel = TRUE;
 					if (want) {
 						char kb[24];
 						I32 kl = (I32)snprintf(kb, sizeof kb, "%" IVdf, (IV)j);
 						sel = hv_fetch(want, kb, kl, 0) != NULL;
 					}
 					av_push(rout, sel
-						? pa_place(aTHX_ c ? *c : NULL, pv, slots, &k, n)
-						: pa_copy(aTHX_ c ? *c : NULL));
+						? pa_place(aTHX_ cell, pv, slots, &k, n)
+						: pa_copy(aTHX_ cell));
 				}
+				FREETMPS; LEAVE;
 			}
 		} else if (kind == PA_AOH) {
 			AV *in = (AV*)ref, *out = newAV();
@@ -35336,68 +35562,75 @@ void p_adjust(...)
 			if (nr > 0) av_extend(out, nr - 1);
 			for (SSize_t i = 0; i < nr; i++) {
 				SV **rs = av_fetch(in, i, 0);
-				HV *row = (HV*)SvRV(*rs);	//the first pass croaked on a hole or a non-HASH row
+				if (!rs || !SvROK(*rs) || SvTYPE(SvRV(*rs)) != SVt_PVHV) PA_CHANGED();
+				HV *row = (HV*)SvRV(*rs);
+				ENTER; SAVETMPS;
+				pa_hold(aTHX_ (SV*)row);
 				HV *rout = newHV();
 				av_push(out, newRV_noinc((SV*)rout));
-				SSize_t nk = pa_sorted_keys(aTHX_ row, kbuf, maxk);
-				for (SSize_t j = 0; j < nk; j++) {
-					const PaEnt *e = &kbuf[j];
-					I32 sk = e->utf8 ? -(I32)e->kl : (I32)e->kl;
-					int sel = !want || hv_fetch(want, e->kp, sk, 0) != NULL;
-					(void)hv_store(rout, e->kp, sk, sel
-						? pa_place(aTHX_ e->val, pv, slots, &k, n)
-						: pa_copy(aTHX_ e->val), 0);
-				}
+				pa_fill_hash(aTHX_ kbuf, pa_sorted_keys(aTHX_ row, kbuf, maxk), rout, want, pv, slots, &k, n);
+				FREETMPS; LEAVE;
 			}
 		} else if (kind == PA_HOA) {
 			HV *in = (HV*)ref, *out = newHV();
 			out_sv = sv_2mortal(newRV_noinc((SV*)out));
-			SSize_t nk = pa_sorted_keys(aTHX_ in, obuf, nouter);
+			const SSize_t nk = pa_sorted_keys(aTHX_ in, obuf, nouter);
+			//every column's key is stored before any cell is read, as pa_fill_hash() does for a row
 			for (SSize_t ci = 0; ci < nk; ci++) {
-				const char *kp = obuf[ci].kp;
-				I32 sk = obuf[ci].utf8 ? -(I32)obuf[ci].kl : (I32)obuf[ci].kl;
-				AV *cin = (AV*)SvRV(obuf[ci].val);
+				PaEnt *o = &obuf[ci];
+				const I32 sk = o->utf8 ? -(I32)o->kl : (I32)o->kl;
+				o->sel = !want || hv_fetch(want, o->kp, sk, 0) != NULL;
+				pa_hold(aTHX_ o->val);
 				AV *cout = newAV();
-				(void)hv_store(out, kp, sk, newRV_noinc((SV*)cout), 0);
+				o->dst = (SV*)cout;
+				(void)hv_store(out, o->kp, sk, newRV_noinc((SV*)cout), 0);
+			}
+			for (SSize_t ci = 0; ci < nk; ci++) {
+				const PaEnt *o = &obuf[ci];
+				if (!o->val || !SvROK(o->val) || SvTYPE(SvRV(o->val)) != SVt_PVAV) PA_CHANGED();
+				AV *cin = (AV*)SvRV(o->val), *cout = (AV*)o->dst;
+				ENTER; SAVETMPS;
+				pa_hold(aTHX_ (SV*)cin);
 				SSize_t nrw = av_len(cin) + 1;
 				if (nrw > 0) av_extend(cout, nrw - 1);
-				int sel = !want || hv_fetch(want, kp, sk, 0) != NULL;
 				for (SSize_t i = 0; i < nrw; i++) {
 					SV **c = av_fetch(cin, i, 0);
-					av_push(cout, sel
-						? pa_place(aTHX_ c ? *c : NULL, pv, slots, &k, n)
-						: pa_copy(aTHX_ c ? *c : NULL));
+					SV *cell = c ? *c : NULL;
+					pa_hold(aTHX_ cell);
+					av_push(cout, o->sel
+						? pa_place(aTHX_ cell, pv, slots, &k, n)
+						: pa_copy(aTHX_ cell));
 				}
+				FREETMPS; LEAVE;
 			}
 		} else {                                                   //PA_HOH
 			HV *in = (HV*)ref, *out = newHV();
 			out_sv = sv_2mortal(newRV_noinc((SV*)out));
-			SSize_t nr = pa_sorted_keys(aTHX_ in, obuf, nouter);
+			const SSize_t nr = pa_sorted_keys(aTHX_ in, obuf, nouter);
 			for (SSize_t ri = 0; ri < nr; ri++) {
-				const PaEnt *re = &obuf[ri];
-				HV *row = (HV*)SvRV(re->val);
+				PaEnt *o = &obuf[ri];
+				pa_hold(aTHX_ o->val);
 				HV *rout = newHV();
-				(void)hv_store(out, re->kp, re->utf8 ? -(I32)re->kl : (I32)re->kl,
+				o->dst = (SV*)rout;
+				(void)hv_store(out, o->kp, o->utf8 ? -(I32)o->kl : (I32)o->kl,
 				               newRV_noinc((SV*)rout), 0);
-				SSize_t nk = pa_sorted_keys(aTHX_ row, kbuf, maxk);
-				for (SSize_t j = 0; j < nk; j++) {
-					const PaEnt *e = &kbuf[j];
-					I32 sk = e->utf8 ? -(I32)e->kl : (I32)e->kl;
-					int sel = !want || hv_fetch(want, e->kp, sk, 0) != NULL;
-					(void)hv_store(rout, e->kp, sk, sel
-						? pa_place(aTHX_ e->val, pv, slots, &k, n)
-						: pa_copy(aTHX_ e->val), 0);
-				}
+			}
+			for (SSize_t ri = 0; ri < nr; ri++) {
+				const PaEnt *o = &obuf[ri];
+				if (!o->val || !SvROK(o->val) || SvTYPE(SvRV(o->val)) != SVt_PVHV) PA_CHANGED();
+				HV *row = (HV*)SvRV(o->val);
+				ENTER; SAVETMPS;
+				pa_hold(aTHX_ (SV*)row);
+				pa_fill_hash(aTHX_ kbuf, pa_sorted_keys(aTHX_ row, kbuf, maxk), (HV*)o->dst, want, pv, slots, &k, n);
+				FREETMPS; LEAVE;
 			}
 		}
 
+		if (k != n) PA_CHANGED();	//a row or column grew or shrank: slots[] is short, or cells went unadjusted
 		if (n) {
 			pa_kernel(pv, adj, n, meth);
 			for (size_t i = 0; i < n; i++) sv_setnv(slots[i], adj[i]);
 		}
-		Safefree(pv);    pv    = NULL; Safefree(adj);   adj   = NULL;
-		Safefree(slots); slots = NULL; Safefree(kbuf);  kbuf  = NULL;
-		Safefree(obuf);  obuf  = NULL;
 		ST(0) = out_sv;
 		XSRETURN(1);
 
@@ -35540,7 +35773,7 @@ SV* cor(...)
 	if (!SvROK(x_sv) || SvTYPE(SvRV(x_sv)) != SVt_PVAV)
 			usage_croak(aTHX_ "cor", "x must be an ARRAY reference");
 
-	AV*x_av = (AV*)SvRV(x_sv);
+	AV*x_av = (AV*)sv_hold(aTHX_ SvRV(x_sv));	// held: a cell's FETCH can drop the caller's last reference
 	size_t nx   = av_len(x_av) + 1;
 	if (nx == 0) croak("cor: x is empty");
 
@@ -35564,7 +35797,7 @@ SV* cor(...)
 	returned 1 on 5.10.1 and 5.12.5.*/
 	const bool has_y = cBOOL(SvOK(y_sv));
 
-	AV*y_av = has_y ? (AV*)SvRV(y_sv) : NULL;
+	AV*y_av = has_y ? (AV*)sv_hold(aTHX_ SvRV(y_sv)) : NULL;
 	size_t ny = has_y ? av_len(y_av) + 1 : 0;
 
 	bool y_is_matrix = 0;
@@ -35682,6 +35915,8 @@ SV* cor(...)
 			for (size_t j = 0; j < ncols_x; j++) Newx(cx[j], nrows, NV);
 			col_x = cx;
 		}
+		(void)row_keep(aTHX_ (SV *const *)xrows, nrows);
+		if (yrows) (void)row_keep(aTHX_ (SV *const *)yrows, nrows);
 		cor_extract_cols(aTHX_ xrows, nrows, col_x, ncols_x, rowbuf);
 		for (size_t j = 0; j < ncols_x; j++) {
 			if (nv_all_equal(col_x[j], nrows)) {
@@ -38202,9 +38437,13 @@ CODE:
 			SvGETMAGIC(i_row_sv);	//a tied hash's fetch is a placeholder until then
 			// 4. Ensure $h->{row} is a Hash and $i->{row} is a valid reference
 			if (SvROK(h_row_sv) && SvTYPE(SvRV(h_row_sv)) == SVt_PVHV && SvROK(i_row_sv)) {
-				HV *h_row_hv = (HV *)SvRV(h_row_sv);
+				/*Both rows are held for the row, and in Case B each key and value
+				  too: jd_store() runs a tied value's FETCH, which could delete
+				  either row, and up to 0.341 Case B then read i_row_av freed.*/
+				ENTER;
+				HV *h_row_hv = (HV *)sv_hold(aTHX_ SvRV(h_row_sv));
 				if (SvTYPE(SvRV(i_row_sv)) == SVt_PVHV) {//Case A: $i->{row} is a Hash Reference
-					HV *i_row_hv = (HV *)SvRV(i_row_sv);
+					HV *i_row_hv = (HV *)sv_hold(aTHX_ SvRV(i_row_sv));
 					HE *i_entry;
 					ITER_KEEP_BEGIN(i_row_hv);
 					hv_iterinit(i_row_hv);
@@ -38216,7 +38455,7 @@ CODE:
 					ITER_KEEP_END;
 				} else if (SvTYPE(SvRV(i_row_sv)) == SVt_PVAV) {
 					// Case B: $i->{row} is an Array Reference
-					AV *i_row_av = (AV *)SvRV(i_row_sv);
+					AV *i_row_av = (AV *)sv_hold(aTHX_ SvRV(i_row_sv));
 					// av_len returns the top index (length - 1)
 					SSize_t top_idx = av_len(i_row_av);
 					// Iterate through the array in chunks of 2 (key-value pairs)
@@ -38224,10 +38463,14 @@ CODE:
 						SV **key_svp = av_fetch(i_row_av, idx, 0);
 						SV **val_svp = av_fetch(i_row_av, idx + 1, 0);
 						if (key_svp && val_svp) {// Ensure both the key and value exist in the array
-							jd_store(aTHX_ h_row_hv, *key_svp, *val_svp);
+							ENTER;
+							SV *key = sv_hold(aTHX_ *key_svp), *val = sv_hold(aTHX_ *val_svp);
+							jd_store(aTHX_ h_row_hv, key, val);
+							LEAVE;
 						}
 					}
 				}
+				LEAVE;
 			}
 		}
 	}
@@ -38760,13 +39003,18 @@ loop breaks as soon as any sub returns false. Non-hashref args are skipped.*/
 				if (!found) GROUP_BY_NO_COL(fc);
 			});
 		}
+		/*A filter, or a tied cell's FETCH, can delete or replace the row, its
+		  label or its value before the value is copied out; up to 0.341 that
+		  copied a freed SV ("panic: attempt to copy freed scalar").  So each
+		  is held for the row, in a scope of the row's own.*/
 		for (SSize_t i = 0; i < len; i++) {
 			SV **row_svp = av_fetch(data_av, i, 0);
 			if (row_svp && SvROK(*row_svp) && SvTYPE(SvRV(*row_svp)) == SVt_PVHV) {
-				HV *row_hv = (HV *)SvRV(*row_svp);
-				SV *group_val = group_by_label(aTHX_ hv_cell(aTHX_ row_hv, group_key_sv));
+				ENTER;
+				HV *row_hv = (HV *)sv_hold(aTHX_ SvRV(*row_svp));
+				SV *group_val = sv_hold(aTHX_ group_by_label(aTHX_ hv_cell(aTHX_ row_hv, group_key_sv)));
 				if (group_val) {
-					SV *target_val = hv_cell(aTHX_ row_hv, target_key_sv);
+					SV *target_val = sv_hold(aTHX_ hv_cell(aTHX_ row_hv, target_key_sv));
 					if (target_val && SvOK(target_val)) {
 						bool pass_filter = 1;
 						FOR_EACH_FILTER({
@@ -38786,6 +39034,7 @@ loop breaks as soon as any sub returns false. Non-hashref args are skipped.*/
 						}
 					}
 				}
+				LEAVE;
 			}
 		}
 	} else if (SvTYPE(SvRV(data_ref)) == SVt_PVHV) {
@@ -38819,17 +39068,18 @@ loop breaks as soon as any sub returns false. Non-hashref args are skipped.*/
 			if (!target_col || !SvROK(target_col) || SvTYPE(SvRV(target_col)) != SVt_PVAV)
 				GROUP_BY_NO_COL(target_key_sv);
 			FOR_EACH_FILTER_COL(fc, { if (!hv_exists_ent(data_hv, fc, 0)) GROUP_BY_NO_COL(fc); });
-			AV *group_av = (AV *)SvRV(group_col);
-			AV *target_av = (AV *)SvRV(target_col);
+			AV *group_av = (AV *)sv_hold(aTHX_ SvRV(group_col));	// held: a filter can delete a column
+			AV *target_av = (AV *)sv_hold(aTHX_ SvRV(target_col));
 			SSize_t g_len = av_len(group_av) + 1;
 			SSize_t t_len = av_len(target_av) + 1;
 			SSize_t len = g_len < t_len ? g_len : t_len;
 			for (SSize_t i = 0; i < len; i++) {
+				ENTER;	// the row's holds, as in the AoH branch
 				SV **g_svp = av_fetch(group_av, i, 0);
-				SV **t_svp = av_fetch(target_av, i, 0);
-				SV *g_val = group_by_label(aTHX_ g_svp ? *g_svp : NULL);
+				SV *g_val = sv_hold(aTHX_ group_by_label(aTHX_ g_svp ? *g_svp : NULL));
 				if (g_val) {
-					SV *t_val = (t_svp && *t_svp) ? *t_svp : NULL;
+					SV **t_svp = av_fetch(target_av, i, 0);	//after the label's magic, which can move the column's storage
+					SV *t_val = sv_hold(aTHX_ (t_svp && *t_svp) ? *t_svp : NULL);
 					if (t_val && SvOK(t_val)) {
 						bool pass_filter = 1;
 						FOR_EACH_FILTER({
@@ -38855,6 +39105,7 @@ loop breaks as soon as any sub returns false. Non-hashref args are skipped.*/
 						}
 					}
 				}
+				LEAVE;
 			}
 		} else {//Hash of Hashes: a column must exist in at least one inner row
 			bool group_found = 0, target_found = 0;
@@ -38887,16 +39138,28 @@ loop breaks as soon as any sub returns false. Non-hashref args are skipped.*/
 				ITER_KEEP_END;
 				if (!found) GROUP_BY_NO_COL(fc);
 			});
-			HE *row_he;
-			ITER_KEEP_BEGIN(data_hv);
-			hv_iterinit(data_hv);
-			while ((row_he = hv_iternext(data_hv))) {
-				SV *row_val = he_val(aTHX_ data_hv, row_he);
-				if (SvROK(row_val) && SvTYPE(SvRV(row_val)) == SVt_PVHV) {
-					HV *inner_hv = (HV *)SvRV(row_val);
-					SV *g_val = group_by_label(aTHX_ hv_cell(aTHX_ inner_hv, group_key_sv));
+			/*The rows are taken out of the hash, held, before any filter runs: a
+			  filter that deletes rows or clears the hash would otherwise do it
+			  under the walk.*/
+			AV *rows_keep = (AV *)sv_2mortal((SV *)newAV());
+			{
+				HE *row_he;
+				ITER_KEEP_BEGIN(data_hv);
+				hv_iterinit(data_hv);
+				while ((row_he = hv_iternext(data_hv))) {
+					SV *row_val = he_val(aTHX_ data_hv, row_he);
+					if (SvROK(row_val) && SvTYPE(SvRV(row_val)) == SVt_PVHV)
+						av_push(rows_keep, SvREFCNT_inc_simple_NN(SvRV(row_val)));
+				}
+				ITER_KEEP_END;
+			}
+			for (SSize_t r = 0; r <= av_len(rows_keep); r++) {
+				{
+					ENTER;	// the row's holds, as in the AoH branch
+					HV *inner_hv = (HV *)AvARRAY(rows_keep)[r];
+					SV *g_val = sv_hold(aTHX_ group_by_label(aTHX_ hv_cell(aTHX_ inner_hv, group_key_sv)));
 					if (g_val) {
-						SV *t_val = hv_cell(aTHX_ inner_hv, target_key_sv);
+						SV *t_val = sv_hold(aTHX_ hv_cell(aTHX_ inner_hv, target_key_sv));
 						if (t_val && SvOK(t_val)) {
 							bool pass_filter = 1;
 							FOR_EACH_FILTER({
@@ -38916,9 +39179,9 @@ loop breaks as soon as any sub returns false. Non-hashref args are skipped.*/
 							}
 						}
 					}
+					LEAVE;
 				}
 			}
-			ITER_KEEP_END;
 		}
 	} else {
 		usage_croak(aTHX_ "group_by", "first argument must be an Array or Hash reference");
