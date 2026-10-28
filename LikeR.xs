@@ -10028,18 +10028,14 @@ of them, the one-way clustered meat of the subset's intersection, with sign
 Miller 2011); the HC1 factor (n - 1)/(n - k) multiplies the total once.  The
 intersection of a subset is built by labelling each observation with the tuple
 of its cluster indices.*/
-static void glm_vcov_robust(pTHX_ size_t n, size_t p, const NV *restrict Xs, const NV *restrict W,
-                            const NV *restrict wres, const NV *restrict XtWXinv, const bool *restrict aliased,
-                            size_t *const *restrict CLv, const size_t *restrict Gv, unsigned short ncl,
-                            short int type, size_t n_ok, size_t k, NV *restrict out) {
+static void glm_vcov_robust(pTHX_ size_t n, size_t p, const NV *restrict Xs, const NV *restrict W, const NV *restrict wres, const NV *restrict XtWXinv, const bool *restrict aliased, size_t *const *restrict CLv, const size_t *restrict Gv, unsigned short ncl, short int type, size_t n_ok, size_t k, NV *restrict out) {
 	if (ncl <= 1) {
-		glm_sandwich(n, p, Xs, W, wres, XtWXinv, aliased, ncl ? CLv[0] : NULL,
-		             ncl ? Gv[0] : 0, type, n_ok, k, out);
+		glm_sandwich(n, p, Xs, W, wres, XtWXinv, aliased, ncl ? CLv[0] : NULL, ncl ? Gv[0] : 0, type, n_ok, k, out);
 		return;
 	}
 	{
 		NV *part;
-		size_t *lab;         //the intersection's labels, for a subset of two or more
+		size_t *lab; //the intersection's labels, for a subset of two or more
 		Newx(part, p * p, NV);
 		Newx(lab, n, size_t);
 		for (size_t q = 0; q < p * p; q++) out[q] = 0.0;
@@ -10047,7 +10043,7 @@ static void glm_vcov_robust(pTHX_ size_t n, size_t p, const NV *restrict Xs, con
 			unsigned bits = 0;
 			NV sign;
 			size_t G;
-			const size_t *labs = lab;   //a single clustering's own labels are used as they are
+			const size_t *labs = lab; //a single clustering's own labels are used as they are
 			for (unsigned short c = 0; c < ncl; c++) if (mask & (1u << c)) bits++;
 			sign = (bits % 2) ? 1.0 : -1.0;
 			if (bits == 1) {
@@ -10094,14 +10090,13 @@ Weighted least squares here is QR, below.  Rows of zero weight take no part,
 and are not counted in the residual degrees of freedom, as lm.wfit() drops
 them.*/
 typedef struct {
-	size_t        n, p;
-	unsigned  rank;
-	NV           *beta;      //p; NaN where aliased
-	NV           *XtXinv;    //p x p, the swept (X'WX)^-1
-	bool         *aliased;
-	NV           *fit;       //n
-	NV            rss;       //sum w r^2
-	IV            df;        //nonzero-weight rows less rank
+	size_t   n, p;
+	unsigned rank;
+	NV *beta; //p; NaN where aliased
+	NV *XtXinv; //p x p, the swept (X'WX)^-1
+	bool *aliased;
+	NV *fit, rss; //n, sum w r^2
+	IV df; //nonzero-weight rows less rank
 } IvWls;
 
 static void iv_wls_alloc(pTHX_ IvWls *restrict f, size_t n, size_t p) {
@@ -10120,12 +10115,11 @@ condition number of X'WX, and the normal equations lost eight digits of the
 intercept's clustered standard error on AER's CigarettesSW panel that QR
 keeps.  A column whose remaining norm falls below 1e-7 of its original is
 aliased (lm.fit()'s tol, applied as dqrdc2 applies it) and left out.*/
-static void iv_wls(IvWls *restrict f, const NV *restrict X, size_t ldx, const size_t *restrict cols,
-                   const NV *restrict y, const NV *restrict w) {
+static void iv_wls(IvWls *restrict f, const NV *restrict X, size_t ldx, const size_t *restrict cols, const NV *restrict y, const NV *restrict w) {
 	const size_t n = f->n, p = f->p;
 	size_t i, j, l, nz = 0, r = 0;
 	NV *A, *b, *norm0, *Rinv;
-	size_t *pos;                  //pos[k]: row of R for column k, when not aliased
+	size_t *pos; //pos[k]: row of R for column k, when not aliased
 	Newx(A, (n ? n : 1) * (p ? p : 1), NV);
 	Newx(b, n ? n : 1, NV);
 	Newx(norm0, p ? p : 1, NV);
