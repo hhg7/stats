@@ -177,6 +177,18 @@ Not a general-purpose rounding barrier: it costs a store and a load, so it does
 not belong in an accumulation loop. The last-ulp drift that excess precision
 causes there is what the build flag is for.*/
 static NV nv_narrow(NV x) { volatile NV t = x; return t; }
+/*x, with everything the optimizer has worked out about it forgotten.
+
+For an overflow test whose fallback reuses the operands -- d = u - l, and
+u/n - l/n when d is not finite. gcc 13 onwards tracks floating-point value
+ranges, and reasons backward from such a test as though the arithmetic could
+not overflow: told that u - l is Inf with l finite, it may conclude u was Inf,
+and rewrite the fallback around that. gcc 13 and 14 at -O3 did this to hist()'s
+midpoints (see compute_hist_logic()), and gcc 15.2 at -O2 to pretty()'s nu loop.
+Testing nv_opaque(d) leaves it nothing to reason back from, and the arithmetic
+is unchanged. Like nv_narrow() it costs a store and a load, so it belongs on the
+test, not in a hot loop.*/
+static NV nv_opaque(NV x) { volatile NV t = x; return t; }
 /*0.95 -- the default conf_level everywhere in this file -- at the build's own
 NV width.
 
@@ -4995,7 +5007,7 @@ y multiplies the smaller loss, as R's bratio() forms it; both are exact
 complements here (see incbeta_xy()).*/
 static NV ib_lambda(NV a, NV b, NV x, NV y) {
 	const NV apb = a + b;
-	if (!nv_isfinite(apb)) return a * y - b * x;
+	if (!nv_isfinite(nv_opaque(apb))) return a * y - b * x;   //nv_opaque(): a and b are reused
 	return (a > b) ? apb * y - b : a - apb * x;
 }
 
@@ -6013,7 +6025,7 @@ static NV nv_pretty_bounds(NV *restrict lo, NV *restrict up, int *restrict ndiv,
 		if (min_n > 1) cell /= min_n;
 	} else {
 		cell = dx;
-		if (nv_isfinite(dx)) {
+		if (nv_isfinite(nv_opaque(dx))) {   //nv_opaque(): up_ and lo_ are reused below
 			if (*ndiv > 1) cell /= *ndiv;
 		} else if (*ndiv >= 2) { //up - lo overflowed, both finite
 			cell = up_ / (*ndiv) - lo_ / (*ndiv);
@@ -6103,7 +6115,7 @@ reason.  Up to 0.3217 the step was Inf and hist([1.7e308, -1.7e308], breaks =>
 static void nv_pretty_fill(NV l, NV u, int n, NV *restrict out){
 	if (n <= 0) { out[0] = l; return; }
 	const NV del = u - l;
-	const bool finite_del = nv_isfinite(del);
+	const bool finite_del = nv_isfinite(nv_opaque(del));   //nv_opaque(): u and l are reused
 	const NV by = finite_del ? del / (NV)n : u / (NV)n - l / (NV)n;
 	out[0] = l;
 	if (finite_del)
@@ -6169,15 +6181,26 @@ static void compute_hist_logic(const NV *restrict x, size_t n,
 	Newx(h, n_bins ? n_bins : 1, NV);
 	Newx(fuzzy, nB, NV);
 	for (size_t i = 0; i < n_bins; i++) {
-		h[i] = breaks[i + 1] - breaks[i];
-		mids[i] = (breaks[i] + breaks[i + 1]) / 2.0;
+		const NV lo = breaks[i], hi = breaks[i + 1];
+		h[i] = hi - lo;
 		/*Two finite breaks whose sum overflows -- a range past 1.7e308 --
 		have a finite midpoint, and halving each first finds it.  R's
 		0.5 * (a + b) gives -Inf there; this departs from it on purpose,
 		because the midpoint exists, and because an x87 build, which adds in
-		extended precision, never overflowed in the first place.*/
-		if (nv_isinf(mids[i]) && nv_isfinite(breaks[i]) && nv_isfinite(breaks[i + 1]))
-			mids[i] = breaks[i] / 2.0 + breaks[i + 1] / 2.0;
+		extended precision, never overflowed in the first place.  Halving a
+		break above NV_MAX / 2 is exact, so this branch equals R's wherever
+		R's is finite.
+
+		The branch is chosen from the breaks, not by testing the sum for Inf
+		after the fact, as up to 0.3412: gcc 13 and 14 at -O3 miscompile that
+		test.  Predictive commoning carries breaks[i + 1] into the next
+		iteration, and jump threading then assumes it is +Inf whenever the
+		overflowed sum is, so the next midpoint came back Inf.  0.3412's
+		Cygwin smoker (gcc 14.4.0, -O3) failed 6 subtests of t/hist.R.t on
+		it; gcc-13 and gcc-14 -O3 reproduce it here, and
+		-fno-predictive-commoning or -fno-thread-jumps hide it.*/
+		mids[i] = (nv_fabs(lo) > NV_MAX / 2.0 || nv_fabs(hi) > NV_MAX / 2.0)
+		        ? lo / 2.0 + hi / 2.0 : (lo + hi) / 2.0;
 	}
 	if (nB > 5) {
 		NV *hs;
@@ -35751,13 +35774,16 @@ NV median(...)
 			nv_select(nums, total_count, up);
 			NV lower = nums[0];
 			for (size_t i = 1; i < up; i++) if (nums[i] > lower) lower = nums[i];
-			median_val = (lower + nums[up]) / 2.0;
+			const NV upper = nums[up];
 			/*Two finite values whose sum overflows: median([1e308, 1e308])
 			was Inf, where R's median(), which takes the mean of the pair in
 			long double, gives 1e308.  Halving each first cannot overflow,
-			and is kept off the common path because it rounds twice.*/
-			if (nv_isinf(median_val) && nv_isfinite(lower) && nv_isfinite(nums[up]))
-				median_val = lower / 2.0 + nums[up] / 2.0;
+			and is kept off the common path because it rounds twice below
+			NV_MAX / 2; above it halving is exact.  The branch is chosen from
+			the pair rather than by testing the sum for Inf, which gcc 13 and
+			14 at -O3 miscompiled in compute_hist_logic().*/
+			median_val = (nv_fabs(lower) > NV_MAX / 2.0 || nv_fabs(upper) > NV_MAX / 2.0)
+			           ? lower / 2.0 + upper / 2.0 : (lower + upper) / 2.0;
 		}
   median_done:
 		LEAVE;	//frees a heap buffer
@@ -36702,7 +36728,7 @@ PPCODE:
 	} else if (del == 0.0 && to == 0.0) {
 		last_val = raw_last = to;       //R returns 'to' here whatever 'by' is
 	} else {
-		const bool finite_del = nv_isfinite(del);
+		const bool finite_del = nv_isfinite(nv_opaque(del));   //nv_opaque(): to and from are reused
 		//to/by - from/by is R's rewrite for a (to - from) that overflowed
 		const NV n = finite_del ? del / by : to / by - from / by;
 		if (!nv_isfinite(n)) {

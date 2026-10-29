@@ -1,5 +1,30 @@
 Revision history for Stats-LikeR
 
+0.3413 2026-10-29 CDT (Claude Opus 5.5 helped)
+
+ [Build: gcc 13 and 14 at -O3]
+
+ - hist() gives finite midpoints again when built with gcc 13 or 14 at -O3,
+   for data whose range is wider than the largest double. Two finite breaks
+   whose sum overflows were found by testing the overflowed midpoint for Inf
+   and then halving each break first; gcc's predictive commoning and jump
+   threading together turned that test into an assumption that the next
+   break was +Inf, so the following midpoint came back Inf. A Cygwin perl
+   5.44.0 smoker of 0.3412 (gcc 14.4.0, -O3) failed 6 subtests of
+   t/hist.R.t this way, and gcc-13 and gcc-14 at -O3 reproduce all 6 here.
+   The halved form is now chosen from the breaks' own magnitudes, above
+   NV_MAX / 2, where halving is exact, so the result equals R's wherever
+   R's is finite.
+
+ - The other overflow tests of the same shape no longer give gcc anything
+   to reason back from: median()'s halved pair, now chosen from the pair's
+   magnitudes as hist()'s is, and the finiteness tests on to - from in
+   seq(), on the range in pretty() and its break fill, and on a + b in the
+   incomplete beta, each of which falls back on its operands. Those four
+   test the difference through a volatile, as pretty()'s nu loop has since
+   0.3412. None of them miscompiles under gcc 13 or 14 at -O3 here, but each
+   has the shape that did, and the next gcc need not spare them.
+
 0.3412 2026-10-29 CDT (Claude Opus 5.5 helped)
 
  [Build: gcc 15.2.0]
