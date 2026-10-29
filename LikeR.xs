@@ -6040,10 +6040,19 @@ static NV nv_pretty_bounds(NV *restrict lo, NV *restrict up, int *restrict ndiv,
 	NV nu = nv_ceil (up_ / unit - PRETTY_ROUNDING_EPS);
 	//eps_correction is 0 for pretty.default(), so its block is not ported
 
+	/*R's `while(!R_FINITE(ns*unit)) ns++` and its nu twin, with the product
+	passed through a volatile.  gcc 15.2.0 -- not 15.1 or 15.3 -- miscompiles
+	the plain form at -O2 and -O3: when the product has overflowed, the nu
+	loop stops one step low, and a non-inlined copy instead loads +Inf into nu
+	and never ends.  -fno-thread-jumps or -fno-tree-ch each avoid it.  The
+	volatile keeps gcc from reasoning back from the product's range to nu's.
+	Found on a perl 5.44.0 / gcc 15.2.0 / glibc 2.43 smoker of 0.3411, where
+	t/hist.R.t's ovf.* rows failed 124 subtests, and reproduced on Compiler
+	Explorer's x86-64 gcc 15.2 with this function extracted.*/
 	while (ns * unit > *lo + PRETTY_ROUNDING_EPS * unit) ns--;
-	while (!nv_isfinite(ns * unit)) ns++;
+	for (;;) { volatile NV p = ns * unit; if (nv_isfinite(p)) break; ns++; }
 	while (nu * unit < *up - PRETTY_ROUNDING_EPS * unit) nu++;
-	while (!nv_isfinite(nu * unit)) nu--;
+	for (;;) { volatile NV p = nu * unit; if (nv_isfinite(p)) break; nu--; }
 
 	int k = (int)(0.5 + nu - ns);
 	if (k < min_n) { //ensure nu - ns == min_n
