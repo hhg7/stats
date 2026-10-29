@@ -1249,16 +1249,21 @@ uses the locale's radix under `use locale`, and PL_curcop here is the caller's
 own), and long double must really be wider than double -- 1 + 1e-18 is 1 at 53
 mantissa bits and is not at 64, and an x87 control word left at double
 precision by some other library would silently break the error bound above.
+Perl must also write an exponent with two digits, as nk_nv_pv() does: a
+Windows perl built against MSVCRT formats %g with the CRT's printf, which
+writes three, so 1e20 is "1e+020" there, and 0.341's value_counts() keyed such
+numbers differently from perl (a Strawberry 5.24 FAIL).
 Cheap enough to ask once per call, which is the only scope over which the
 answer is guaranteed to hold still.*/
 static bool nk_fast_nv_ok(pTHX) {
 #ifdef NK_FAST_NV
 	static volatile long double one = 1.0L;
 	if (one + 1e-18L == one) return 0;
-	SV *probe = sv_2mortal(newSVnv((NV)1.5));
 	STRLEN l;
-	const char *p = SvPV(probe, l);
-	return cBOOL(l == 3 && memcmp(p, "1.5", 3) == 0);
+	const char *p = SvPV(sv_2mortal(newSVnv((NV)1.5)), l);
+	if (!(l == 3 && memcmp(p, "1.5", 3) == 0)) return 0;
+	p = SvPV(sv_2mortal(newSVnv((NV)1e20)), l);
+	return cBOOL(l == 5 && memcmp(p, "1e+20", 5) == 0);
 #else
 	PERL_UNUSED_CONTEXT;
 	return 0;
@@ -17723,9 +17728,18 @@ user's comparator runs cleanly even under `use warnings FATAL => 'all'`.
 
 __cs_uninit_catcher is installed as $SIG{__WARN__} for the probe only; it
 flags $Stats::LikeR::_cs_uninit on an uninitialized warning and passes any
-other warning through.  (Both the flag and catcher are interpreter-local.)*/
-static XS(cs_uninit_catcher);
-static XS(cs_uninit_catcher) {
+other warning through.  (Both the flag and catcher are interpreter-local.)
+
+It is declared XS_INTERNAL, not `static XS()`: on Cygwin and Win32, XS() is
+XS_EXTERNAL, which carries __declspec(dllexport), and gcc refuses that on a
+static function (the 0.341 Cygwin FAIL).  XS_INTERNAL arrived in 5.15.2 and
+ppport.h does not provide it, hence the fallback, which is XSUB.h's own
+definition.*/
+#ifndef XS_INTERNAL
+#  define XS_INTERNAL(name) STATIC XSPROTO(name)
+#endif
+XS_INTERNAL(cs_uninit_catcher);
+XS_INTERNAL(cs_uninit_catcher) {
 	dXSARGS;
 	if (items >= 1) {
 		STRLEN l;

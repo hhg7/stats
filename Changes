@@ -1,5 +1,33 @@
 Revision history for Stats-LikeR
 
+0.3411 2026-10-28 CDT (Claude Opus 5.5 helped)
+
+ [Build]
+
+ - It builds on Cygwin again. 0.341 declared the warning catcher that
+   csort() installs to find which rows its comparator reads undef from as
+   `static XS()`, so that it would not be exported; on Cygwin, XS() is
+   XS_EXTERNAL and carries __declspec(dllexport), which gcc refuses on a
+   static function ("external linkage required for symbol
+   'cs_uninit_catcher' because of 'dllexport' attribute"). It is now
+   declared XS_INTERNAL, perl's own static XSUB, with a fallback copied from
+   XSUB.h for perls before 5.15.2, which do not have it and get no help from
+   ppport.h.
+
+ [Windows: three-digit exponents]
+
+ - value_counts() keys a number the way perl stringifies it on Windows
+   perls built against MSVCRT, such as Strawberry 5.24. Its fast renderer
+   for doubles, also used by drop_duplicates() and merge(), always wrote a
+   two-digit exponent (1e+20), while perl's %g there is the CRT's and writes
+   three (1e+020), so such numbers were counted under keys perl would never
+   produce. The fast path is now taken only when perl itself writes 1e20 as
+   1e+20, and perl's own stringification is used otherwise.
+
+ - t/power_t_test.R.scipy.t takes the 1e+07 in an expected croak message
+   from perl's own %g rather than hardcoding it, since that message is
+   formatted by perl and reads 1e+007 on the same perls.
+
 0.341 2026-10-26 CDT (Claude Opus 5.5 helped)
 
  [write_table: workbooks of several worksheets]
