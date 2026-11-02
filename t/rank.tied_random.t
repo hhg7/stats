@@ -49,7 +49,7 @@ use Stats::LikeR qw(rank);
 }
 require Tie::Array;
 
-# --- tied arrays and tied elements ------------------------------------------
+# --- tied arrays and tied elements 
 {
 	tie my @x, 'Tie::StdArray';
 	@x = (3, 1, 2);
@@ -90,7 +90,7 @@ require Tie::Array;
 	is_deeply([rank([2, 1])], [2, 1], 'rank works after a croak mid-gather');
 }
 
-# --- ties_method => 'random' ------------------------------------------------
+# --- ties_method => 'random' 
 {
 	my @ties = (1) x 20;
 	srand(42); my @a = rank(\@ties, ties_method => 'random');

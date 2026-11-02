@@ -9610,26 +9610,26 @@ single block.*/
 #define GLM_FE_BLOCK    16
 
 typedef struct {
-	size_t        n, p;      //rows (zero-weight ones included), design columns
-	const NV     *X;         //n x p, row-major
-	const NV     *y;
-	const NV     *off;       //NULL: no offset
-	const NV     *pw;        //prior weights; NULL: every weight is 1
-	short int     fam;       //GLM_GAUSSIAN, GLM_BINOMIAL, GLM_POISSON, GLM_NEGBIN
-	NV            theta;     //GLM_NEGBIN only
+	size_t n, p; //rows (zero-weight ones included), design columns
+	const NV *X; //n x p, row-major
+	const NV *y;
+	const NV *off; //NULL: no offset
+	const NV *pw; //prior weights; NULL: every weight is 1
+	short int fam; //GLM_GAUSSIAN, GLM_BINOMIAL, GLM_POISSON, GLM_NEGBIN
+	NV theta; //GLM_NEGBIN only
 	unsigned short nfe;  //absorbed factors; 0 = none
-	size_t      **fe;        //fe[k][i]: row i's group in factor k
-	const size_t *ng;        //fe[k] takes values 0 .. ng[k] - 1
-	NV          **fe_sw;     //scratch, ng[k] each: sum of weights per group
-	NV          **fe_s;      //scratch, ng[k] * GLM_FE_BLOCK each: weighted sums per group
-	NV           *Xd, *Zd;   //demeaned X and z; NULL when nfe == 0
-	NV           *lin;       //nfe > 0: eta - offset at the current step
-	NV           *lin_prev;  //nfe > 0: the same at the last accepted step
-	NV           *mu, *eta, *W, *Z, *beta, *beta_old, *XtWX, *XtWZ;
-	bool         *aliased;
-	NV            dev;
+	size_t **fe; //fe[k][i]: row i's group in factor k
+	const size_t *ng; //fe[k] takes values 0 .. ng[k] - 1
+	NV **fe_sw; //scratch, ng[k] each: sum of weights per group
+	NV **fe_s; //scratch, ng[k] * GLM_FE_BLOCK each: weighted sums per group
+	NV *Xd, *Zd; //demeaned X and z; NULL when nfe == 0
+	NV *lin; //nfe > 0: eta - offset at the current step
+	NV *lin_prev;  //nfe > 0: the same at the last accepted step
+	NV *mu, *eta, *W, *Z, *beta, *beta_old, *XtWX, *XtWZ;
+	bool *aliased;
+	NV dev;
 	unsigned  iter, rank;
-	bool          converged, boundary;
+	bool converged, boundary;
 } GlmIrls;
 
 //Unit deviance, R's family$dev.resids() for a prior weight of 1.
@@ -9976,8 +9976,8 @@ static size_t mf_take_calls(pTHX_ const char *restrict fname, const char *restri
 			}
 			if (cnt == cap) { cap = cap ? 2 * cap : 4; Renew(list, cap, char *); }
 			list[cnt++] = savepvn(start, len);
-			q++;                              //past the closing ')'
-			if (*q == '+') q++;               //and the '+' that followed it
+			q++; //past the closing ')'
+			if (*q == '+') q++; //and the '+' that followed it
 			else if (p > rhs && p[-1] == '+') p--;  //or the one before it
 			memmove(p, q, strlen(q) + 1);
 			continue;
@@ -10410,10 +10410,7 @@ static void iv_wls(IvWls *restrict f, const NV *restrict X, size_t ldx, const si
 from the two residual sums of squares, or, with a robust vcov, b'V^-1 b / q
 on the coefficients the larger model adds.  Returns the statistic and sets
 df1/df2.*/
-static NV iv_wald(pTHX_ const IvWls *restrict f0, const IvWls *restrict f1, const NV *restrict X1, size_t ld1,
-                  const size_t *restrict cols1, const bool *restrict extra, const NV *restrict y, const NV *restrict w,
-                  short int vtype, size_t *const *restrict CLv, const size_t *restrict Gv, unsigned short ncl,
-                  IV *restrict df1, IV *restrict df2) {
+static NV iv_wald(pTHX_ const IvWls *restrict f0, const IvWls *restrict f1, const NV *restrict X1, size_t ld1, const size_t *restrict cols1, const bool *restrict extra, const NV *restrict y, const NV *restrict w, short int vtype, size_t *const *restrict CLv, const size_t *restrict Gv, unsigned short ncl, IV *restrict df1, IV *restrict df2) {
 	*df1 = (IV)f1->rank - (IV)f0->rank;
 	*df2 = f1->df;
 	if (vtype < 0) return ((f0->rss - f1->rss) / (NV)*df1) / (f1->rss / (NV)*df2);
@@ -10483,10 +10480,10 @@ static NV iv_wald(pTHX_ const IvWls *restrict f0, const IvWls *restrict f1, cons
    worth having -- see wdist_ranksum(). */
 typedef struct {
 	NV *d, total; // total counts every cell of the support, mirrored ones too
-	size_t len;               // cells in the support
-	IV base;                  // scaled statistic that d[0] counts
+	size_t len; // cells in the support
+	IV base; // scaled statistic that d[0] counts
 	unsigned short scale; // 1 for integral ranks, 2 for half-integral
-	bool symmetric;           // d[i] == d[len-1-i], so d holds only the low half
+	bool symmetric; // d[i] == d[len-1-i], so d holds only the low half
 } WilcoxDist;
 
 /* Ceiling on the cells of any one exact table: 16M NVs is 128MB on a double
@@ -10526,7 +10523,7 @@ static void wdist_free(WilcoxDist *D) {
 	D->total = 0.0;
 }
 
-/*The cells of d a table actually holds: all of them, or a folded one's low half.*/
+//The cells of d a table actually holds: all of them, or a folded one's low half
 static size_t wdist_stored(const WilcoxDist *D) {
 	return D->symmetric ? (D->len + 1) / 2 : D->len;
 }
@@ -10578,7 +10575,7 @@ static NV wdist_tail(const WilcoxDist *D, NV q, bool lower) {
 	if (D->symmetric) {
 		NV s = 0.0;
 		if (k >= D->len / 2) {
-			size_t k2 = D->len - 2 - k;          /* P(S > q) == P(S <= mirror) */
+			size_t k2 = D->len - 2 - k; // P(S > q) == P(S <= mirror)
 			for (size_t i = 0; i <= k2; i++) s += D->d[i];
 			s /= D->total;
 			return lower ? 1.0 - s : s;
@@ -10675,8 +10672,7 @@ static void wdist_ranksum(pTHX_ WilcoxDist *restrict D, size_t m, size_t n) {
  whatever the ties, and only its low half is built.  As in wdist_signrank()
  the recurrence reads only lower cells, so that half is the full loop's, bit
  for bit. */
-static void wdist_signrank_perm(pTHX_ WilcoxDist *restrict D, const UV *restrict z, size_t n,
-                                unsigned short scale) {
+static void wdist_signrank_perm(pTHX_ WilcoxDist *restrict D, const UV *restrict z, size_t n, unsigned short scale) {
 	size_t sum_a = 0;
 	for (size_t i = 0; i < n; i++) {
 		if (z[i] > WILCOX_MAX_CELLS - sum_a) wilcox_too_big(aTHX);
