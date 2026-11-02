@@ -28,6 +28,28 @@ Revision history for Stats-LikeR
    same value for the example's data from sqrt(sum(w^2 * count / pop^2)),
    with w the standard population's weights, scaled by per.
 
+ [rank()]
+
+ - ties_method => 'random' seeds the generator before drawing, as runif()
+   and sample() do. It called Drand01() without AUTO_SEED_PRNG(), so a
+   process that never called srand() drew from an unseeded generator, and
+   every run broke ties in the same order.
+
+ - A tied array, a tied element and a tied scalar argument are ranked by
+   their values. Elements were tested with SvOK() before their get magic
+   ran, so every element of a tied array read as undef: a tied (3, 1, 2)
+   ranked as 1 2 3, the ranks of three NAs. Each is now fetched once.
+
+ - An array that grows while it is read, through a FETCH that pushes onto
+   it, is read only as far as it was counted. The gather loop took each
+   array's length again, so a growing array could write past the end of
+   the work buffers.
+
+ - The work buffers are on the save stack, so a croak part-way through,
+   from an overloaded value or a FETCH that dies, no longer leaks them.
+   They were freed by hand at the end. t/rank.tied_random.t covers all
+   four.
+
 0.3413 2026-10-29 CDT (Claude Opus 5.5 helped)
 
  [Build: gcc 13 and 14 at -O3]

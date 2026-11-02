@@ -10024,7 +10024,7 @@ static void glm_var_spec(pTHX_ const char *restrict fname, const char *restrict 
 }
 
 //Row i of a numeric GlmVarSpec; NaN for missing or non-numeric.
-static NV glm_var_num(pTHX_ const GlmVarSpec *restrict s, HV *data_hoa, HV **row_hashes, size_t i) {
+static NV glm_var_num(pTHX_ const GlmVarSpec *restrict s, HV *data_hoa, HV **row_hashes, size_t i){
 	if (s->col) return evaluate_term(aTHX_ data_hoa, row_hashes, (unsigned)i, s->col);
 	if (s->av) {
 		SV *sv = av_at(aTHX_ s->av, (SSize_t)i);
@@ -10036,8 +10036,7 @@ static NV glm_var_num(pTHX_ const GlmVarSpec *restrict s, HV *data_hoa, HV **row
 /*Row i of a label-valued GlmVarSpec as a dense index, via map (label -> index,
 assigned in order of first appearance; *count is the number assigned so far).
 Returns FALSE when the value is missing.*/
-static bool glm_var_label(pTHX_ const GlmVarSpec *restrict s, HV *data_hoa, HV **row_hashes,
-                          size_t i, HV *map, size_t *restrict count, size_t *restrict idx) {
+static bool glm_var_label(pTHX_ const GlmVarSpec *restrict s, HV *data_hoa, HV **row_hashes, size_t i, HV *map, size_t *restrict count, size_t *restrict idx) {
 	SV **hit;
 	if (s->col) {
 		char *lab = get_data_string_alloc(aTHX_ data_hoa, row_hashes, i, s->col);
@@ -10161,10 +10160,7 @@ static void glm_meat_add(const NV *restrict s, size_t p, NV *restrict M) {
 	}
 }
 
-static void glm_sandwich(size_t n, size_t p, const NV *restrict Xs, const NV *restrict W,
-                         const NV *restrict wres, const NV *restrict XtWXinv, const bool *restrict aliased,
-                         const size_t *restrict cl, size_t G, short int type,
-                         size_t n_ok, size_t k, NV *restrict out) {
+static void glm_sandwich(size_t n, size_t p, const NV *restrict Xs, const NV *restrict W, const NV *restrict wres, const NV *restrict XtWXinv, const bool *restrict aliased, const size_t *restrict cl, size_t G, short int type, size_t n_ok, size_t k, NV *restrict out) {
 	//type: 0 = HC0, 1 = HC1, 2 = HC2, 3 = HC3 (2 and 3 only without clusters)
 	NV *S, *M, *T;
 	size_t i, j, l, ng = cl ? G : 1;
@@ -10296,7 +10292,7 @@ Weighted least squares here is QR, below.  Rows of zero weight take no part,
 and are not counted in the residual degrees of freedom, as lm.wfit() drops
 them.*/
 typedef struct {
-	size_t   n, p;
+	size_t n, p;
 	unsigned rank;
 	NV *beta; //p; NaN where aliased
 	NV *XtXinv; //p x p, the swept (X'WX)^-1
@@ -24062,6 +24058,7 @@ void rank(...)
 	PROTOTYPE: @
 	PPCODE:
 		int ties = RANK_AVERAGE, nalast = NALAST_TRUE;
+		args_get_magic(aTHX_ ax, items);	//before any SvOK() or SvROK() reads an argument
 		/* locate trailing "key => value" options
 		 Options begin at the first plain-string arg equal to a
 		 known option name; everything before it is data.*/
@@ -24120,33 +24117,52 @@ void rank(...)
 				usage_croak(aTHX_ "rank", "unknown option '%s' (ties_method, na_last)", k);
 			}
 		}
-		// count total data elements
+		/*Count total data elements, keeping each array's length: the gather
+		below reads no more of an array than was counted here, whatever a FETCH
+		does to it in between.*/
 		size_t N = 0;
+		size_t *alen = NULL;	// alen[i]: elements counted in argument i
+		Newx(alen, opt_start ? (size_t)opt_start : 1, size_t); SAVEFREEPV(alen);
 		for (Stack_off_t i = 0; i < opt_start; i++) {
 			SV *a = ST(i);
 			if (SvROK(a) && SvTYPE(SvRV(a)) == SVt_PVAV)
-				N += (size_t)(av_len((AV *)SvRV(a)) + 1);
+				alen[i] = (size_t)(av_len((AV *)SvRV(a)) + 1);
 			else
-				N += 1;
+				alen[i] = 1;
+			N += alen[i];
 		}
 		if (N == 0) XSRETURN_EMPTY;
-		// gather values, flag NAs (undef or NaN)
+		/*Gather values, flag NAs (undef or NaN).
+
+		The buffers go on the save stack because SvNV() can die part-way through
+		-- an overloaded value, or a tied element whose FETCH croaks -- and up to
+		0.3414 they were freed by hand at the end, so a croak leaked all four.*/
 		char      *na    = NULL;   // 1 if element is NA
 		IV        *nidx  = NULL;   // non-NA index per position, else -1
 		rank_pair *pairs = NULL;   // packed non-NA values
-		Newx(na,    N, char);
-		Newx(nidx,  N, IV);
-		Newx(pairs, N, rank_pair);
+		Newx(na,    N, char);      SAVEFREEPV(na);
+		Newx(nidx,  N, IV);        SAVEFREEPV(nidx);
+		Newx(pairs, N, rank_pair); SAVEFREEPV(pairs);
 		size_t n = 0, p = 0; // number of non-NA values; running position
 		for (Stack_off_t i = 0; i < opt_start; i++) {
 			SV *a = ST(i);
 			if (SvROK(a) && SvTYPE(SvRV(a)) == SVt_PVAV) {
 				AV *av = (AV *)SvRV(a);
+				/*A FETCH is perl code and can grow this array, or one after it,
+				since it was counted: the buffers hold N positions, so reading
+				stops at the counted length rather than writing past them.  One
+				that shrank yields fewer, and N is cut to match below.*/
 				size_t len = (size_t)(av_len(av) + 1);
+				if (len > alen[i]) len = alen[i];
 				for (size_t j = 0; j < len; j++) {
-					SV **tv = av_fetch(av, j, 0);
-					if (tv && SvOK(*tv)) {
-						NV val = SvNV(*tv);
+					/*av_slow_at() runs the element's get magic before SvOK()
+					looks at it: up to 0.3414 a raw av_fetch() handed back a
+					tied array's unfetched PVLV, which reads as undef, so
+					rank(\@tied) ranked every element as NA.  sv_fetched()
+					keeps SvNV() from running FETCH a second time.*/
+					SV *tv = av_slow_at(aTHX_ av, (SSize_t)j);
+					if (tv) {
+						NV val = SvNV(sv_fetched(aTHX_ tv));
 						if (val != val) { // NaN => NA
 							na[p] = 1; nidx[p] = -1;
 						} else {
@@ -24176,8 +24192,14 @@ void rank(...)
 				p++;
 			}
 		}
-		if (ties == RANK_RANDOM)// sort the non-NA values
+		N = p;	// an array that a FETCH shrank leaves fewer positions than were counted
+		if (ties == RANK_RANDOM) {	// sort the non-NA values
+			/*Seed first, as runif() and sample() do: up to 0.3414 a process that
+			had not called srand() drew from an unseeded generator, so every run
+			broke ties in the same order.*/
+			AUTO_SEED_PRNG();
 			for (size_t k = 0; k < n; k++) pairs[k].rnd = Drand01();
+		}
 
 		if (n > 1) {
 			if      (ties == RANK_RANDOM) rank_pair_rnd_sort(pairs, n);
@@ -24186,7 +24208,7 @@ void rank(...)
 		}
 		// assign ranks (1-based) by non-NA index
 		NV *rank_of = NULL;
-		Newx(rank_of, n ? n : 1, NV);
+		Newx(rank_of, n ? n : 1, NV); SAVEFREEPV(rank_of);
 		if (ties == RANK_AVERAGE || ties == RANK_MIN || ties == RANK_MAX) {
 			size_t k = 0;
 			while (k < n) {
@@ -24204,7 +24226,6 @@ void rank(...)
 			for (size_t k = 0; k < n; k++)
 				rank_of[pairs[k].idx] = (NV)(k + 1);
 		}
-		Safefree(pairs); pairs = NULL;
 		// emit results in original order, per na_last
 		size_t nna = N - n;                          // number of NAs
 		size_t M   = (nalast == NALAST_DROP) ? n : N;
@@ -24236,7 +24257,6 @@ void rank(...)
 				if (rv == (NV)(IV)rv) mPUSHi((IV)rv); else mPUSHn(rv);
 			}
 		}
-		Safefree(rank_of);	Safefree(nidx);	Safefree(na);
 
 NV ptukey(...)
 CODE:
