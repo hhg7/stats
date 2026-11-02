@@ -1,5 +1,33 @@
 Revision history for Stats-LikeR
 
+0.3414 2026-11-02 CST (Claude Opus 5.5 helped)
+
+ [Distribution metadata]
+
+ - The META homepage is https://metacpan.org/dist/Stats-LikeR. It pointed
+   at https://metacpan.org/dist/stats, the GitHub repository's name rather
+   than the distribution's, which is not a page on MetaCPAN.
+
+ - Stats::LikeR::Usage is no longer indexed. It holds the help screens
+   printed above a calling error, has no POD and no interface of its own,
+   and MetaCPAN listed it beside Stats::LikeR as a module with no abstract.
+
+ [Documentation]
+
+ - The Synopsis is now a runnable example: read a table, summarize it, take
+   a mean and sd, compare two groups with t_test() and fit lm(). The prose
+   that was there moves to a new Description, which now says where these
+   functions follow R rather than List::Util: min(), max(), sum(), mean(),
+   median(), sd() and var() croak when called with no arguments, where
+   List::Util returns undef, and a NaN in the input makes the result NaN.
+
+ - add_data()'s resulting structures are written as Perl data rather than
+   JSON, and the mixed-hash example now shows the target it starts from.
+
+ - age_standardize() documents an example value for se, 114.4. R gives the
+   same value for the example's data from sqrt(sum(w^2 * count / pop^2)),
+   with w the standard population's weights, scaled by per.
+
 0.3413 2026-10-29 CDT (Claude Opus 5.5 helped)
 
  [Build: gcc 13 and 14 at -O3]

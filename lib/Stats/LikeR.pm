@@ -3,7 +3,7 @@
 require 5.010001;
 use strict;
 package Stats::LikeR;
-our $VERSION = '0.3413';	# quoted: a bare version ending in 0, such as 0.320, is the number 0.32, which the dist would be named
+our $VERSION = '0.3414';	# quoted: a bare version ending in 0, such as 0.320, is the number 0.32, which the dist would be named
 require XSLoader;
 use warnings FATAL => 'all';
 use Exporter 'import';
@@ -6876,7 +6876,36 @@ package Stats::LikeR;
 
 =head1 Synopsis
 
-Get basic statistical functions working in Perl as if they were part of List::Util, like C<min>, C<max>, C<sum>, etc.
+ use Stats::LikeR;
+
+ my $patients = read_table('patients.csv');    # array of hashes, one per row
+ summary($patients);                            # R's summary(), one row per column
+
+ my @sbp = map { $_->{sbp} } @$patients;
+ printf "mean SBP %.1f (sd %.1f)\n", mean(\@sbp), sd(\@sbp);
+
+ my %by_arm = (drug => [], placebo => []);
+ push @{ $by_arm{ $_->{arm} } }, $_->{sbp} for @$patients;
+ my $t = t_test($by_arm{drug}, $by_arm{placebo});     # Welch, as R's t.test
+ printf "drug - placebo: t = %.2f, p = %.3g\n", $t->{statistic}, $t->{p_value};
+
+ my $fit = lm(formula => 'sbp ~ age + arm', data => $patients);
+ printf "%-10s %8.3f  p = %.3g\n", $_, $fit->{summary}{$_}{Estimate},
+     $fit->{summary}{$_}{'Pr(>|t|)'} for sort keys %{ $fit->{summary} };
+
+=head1 Description
+
+Statistical functions for Perl that give the answers R gives: descriptive
+statistics, hypothesis tests, regression models, effect sizes, distributions,
+and the reading, reshaping and writing of tables. They are called as plainly as
+List::Util's C<min>, C<max> and C<sum>, but they follow R's semantics rather than
+List::Util's. In particular, C<min>, C<max>, C<sum>, C<mean>, C<median>, C<sd> and
+C<var> croak when called with no arguments, as C<min(@empty)> is, where
+List::Util returns C<undef>; given a reference to an empty array, as
+C<min(\@empty)>, they return C<undef>. A C<NaN> anywhere in the input makes the
+result C<NaN>, as it does in R.
+
+Every function is exported by default.
 
 =head1 Getting help
 
@@ -6925,13 +6954,13 @@ When the target is a Hash of Hashes, incoming hash keys update existing rows, an
 B<Resulting Structure:>
 
  {
-     "Jack Smith":  {
-         "age":  30,
-         "dept": "Engineering"
+     'Jack Smith' => {
+         age  => 30,
+         dept => 'Engineering'
      },
-     "Jane Doe":    {
-         "age":  25,
-         "dept": "Sales"
+     'Jane Doe'   => {
+         age  => 25,
+         dept => 'Sales'
      }
  }
 
@@ -6949,8 +6978,8 @@ When the target is a Hash of Arrays, incoming arrays are pushed onto the existin
 B<Resulting Structure:>
 
  {
-     "Project Alpha": [ "task1", "task2", "task3" ],
-     "Project Beta":  [ "task1", "task2" ]
+     'Project Alpha' => [ 'task1', 'task2', 'task3' ],
+     'Project Beta'  => [ 'task1', 'task2' ]
  }
 
 =head3 Array of Hashes / Arrays (AoH / AoA)
@@ -6971,8 +7000,8 @@ C<add_data> now natively supports Array references at the root level. When targe
 B<Resulting Structure:>
 
  [
-     { "id": 1, "name": "Alice", "role": "Admin" },
-     { "id": 2, "name": "Bob" }
+     { id => 1, name => 'Alice', role => 'Admin' },
+     { id => 2, name => 'Bob' }
  ]
 
 =head3 Advanced Structural Coercion & Cross-Merging
@@ -6993,14 +7022,15 @@ B<2. Root-Level Coercion (Mixing Outer Containers):>
 
 =over
 
-=item * B<Target is Array, Source is Hash:> The function evaluates the Hash keys as numeric indices. (e.g., source key C<"0"> merges into target array index C<[0]>). Non-numeric keys are safely ignored.
+=item * B<Target is Array, Source is Hash:> The function evaluates the Hash keys as numeric indices. (e.g., source key C<'0'> merges into target array index C<[0]>). Non-numeric keys are safely ignored.
 
-=item * B<Target is Hash, Source is Array:> The function converts the Array indices into stringified Hash keys. (e.g., source array index C<[1]> merges into target hash key C<"1">).
+=item * B<Target is Hash, Source is Array:> The function converts the Array indices into stringified Hash keys. (e.g., source array index C<[1]> merges into target hash key C<'1'>).
 
 =back
 
 =head3 Source is a mixed Hash. Keys dictate the target array index!
 
+ $data = [ { x => 10 } ];
  $n = {
      '0' => { y => 20 },                 # Merges into $data->[0]
      '1' => [ 'z', 30 ],                 # Array pair coerced to Hash, creates $data->[1]
@@ -7012,8 +7042,8 @@ B<2. Root-Level Coercion (Mixing Outer Containers):>
 B<Resulting Structure strictly remains an Array of Hashes:>
 
  [
-     { "x": 10, "y": 20 },
-     { "z": 30 }
+     { x => 10, y => 20 },
+     { z => 30 }
  ]
 
 NB: If C<add_data> is called on a completely empty target reference (e.g., C<$data = {}> or C<$data = []>), it will intelligently infer the required inner structure (Hashes vs Arrays) by inspecting the first valid row of the source data.
@@ -7141,7 +7171,7 @@ instead of C<count> if you already have stratum-specific rates.
   <td><code>se</code></td>
   <td><code>Double</code></td>
   <td>Standard error of the standardized rate (× <code>per</code>).</td>
-  <td></td>
+  <td><code>114.4</code></td>
 </tr>
 <tr>
   <td><code>conf_level</code></td>

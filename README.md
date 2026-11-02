@@ -1,6 +1,35 @@
 # Synopsis
 
-Get basic statistical functions working in Perl as if they were part of List::Util, like `min`, `max`, `sum`, etc.
+    use Stats::LikeR;
+
+    my $patients = read_table('patients.csv');    # array of hashes, one per row
+    summary($patients);                            # R's summary(), one row per column
+
+    my @sbp = map { $_->{sbp} } @$patients;
+    printf "mean SBP %.1f (sd %.1f)\n", mean(\@sbp), sd(\@sbp);
+
+    my %by_arm = (drug => [], placebo => []);
+    push @{ $by_arm{ $_->{arm} } }, $_->{sbp} for @$patients;
+    my $t = t_test($by_arm{drug}, $by_arm{placebo});     # Welch, as R's t.test
+    printf "drug - placebo: t = %.2f, p = %.3g\n", $t->{statistic}, $t->{p_value};
+
+    my $fit = lm(formula => 'sbp ~ age + arm', data => $patients);
+    printf "%-10s %8.3f  p = %.3g\n", $_, $fit->{summary}{$_}{Estimate},
+        $fit->{summary}{$_}{'Pr(>|t|)'} for sort keys %{ $fit->{summary} };
+
+# Description
+
+Statistical functions for Perl that give the answers R gives: descriptive
+statistics, hypothesis tests, regression models, effect sizes, distributions,
+and the reading, reshaping and writing of tables. They are called as plainly as
+List::Util's `min`, `max` and `sum`, but they follow R's semantics rather than
+List::Util's. In particular, `min`, `max`, `sum`, `mean`, `median`, `sd` and
+`var` croak when called with no arguments, as `min(@empty)` is, where
+List::Util returns `undef`; given a reference to an empty array, as
+`min(\@empty)`, they return `undef`. A `NaN` anywhere in the input makes the
+result `NaN`, as it does in R.
+
+Every function is exported by default.
 
 # Getting help
 
@@ -49,13 +78,13 @@ When the target is a Hash of Hashes, incoming hash keys update existing rows, an
 **Resulting Structure:**
 
     {
-        "Jack Smith":  {
-            "age":  30,
-            "dept": "Engineering"
+        'Jack Smith' => {
+            age  => 30,
+            dept => 'Engineering'
         },
-        "Jane Doe":    {
-            "age":  25,
-            "dept": "Sales"
+        'Jane Doe'   => {
+            age  => 25,
+            dept => 'Sales'
         }
     }
 
@@ -73,8 +102,8 @@ When the target is a Hash of Arrays, incoming arrays are pushed onto the existin
 **Resulting Structure:**
 
     {
-        "Project Alpha": [ "task1", "task2", "task3" ],
-        "Project Beta":  [ "task1", "task2" ]
+        'Project Alpha' => [ 'task1', 'task2', 'task3' ],
+        'Project Beta'  => [ 'task1', 'task2' ]
     }
 
 ### Array of Hashes / Arrays (AoH / AoA)
@@ -95,8 +124,8 @@ When the target is a Hash of Arrays, incoming arrays are pushed onto the existin
 **Resulting Structure:**
 
     [
-        { "id": 1, "name": "Alice", "role": "Admin" },
-        { "id": 2, "name": "Bob" }
+        { id => 1, name => 'Alice', role => 'Admin' },
+        { id => 2, name => 'Bob' }
     ]
 
 ### Advanced Structural Coercion & Cross-Merging
@@ -110,11 +139,12 @@ When the target is a Hash of Arrays, incoming arrays are pushed onto the existin
 
 **2. Root-Level Coercion (Mixing Outer Containers):**
 
-* **Target is Array, Source is Hash:** The function evaluates the Hash keys as numeric indices. (e.g., source key `"0"` merges into target array index `[0]`). Non-numeric keys are safely ignored.
-* **Target is Hash, Source is Array:** The function converts the Array indices into stringified Hash keys. (e.g., source array index `[1]` merges into target hash key `"1"`).
+* **Target is Array, Source is Hash:** The function evaluates the Hash keys as numeric indices. (e.g., source key `'0'` merges into target array index `[0]`). Non-numeric keys are safely ignored.
+* **Target is Hash, Source is Array:** The function converts the Array indices into stringified Hash keys. (e.g., source array index `[1]` merges into target hash key `'1'`).
 
 ### Source is a mixed Hash. Keys dictate the target array index!
 
+    $data = [ { x => 10 } ];
     $n = {
         '0' => { y => 20 },                 # Merges into $data->[0]
         '1' => [ 'z', 30 ],                 # Array pair coerced to Hash, creates $data->[1]
@@ -126,8 +156,8 @@ When the target is a Hash of Arrays, incoming arrays are pushed onto the existin
 **Resulting Structure strictly remains an Array of Hashes:**
 
     [
-        { "x": 10, "y": 20 },
-        { "z": 30 }
+        { x => 10, y => 20 },
+        { z => 30 }
     ]
 
 
@@ -170,7 +200,7 @@ instead of `count` if you already have stratum-specific rates.
 | `crude_rate` | `Double` | Unadjusted overall rate (× `per`). | `1400.0` |
 | `adj_rate` | `Double` | Directly standardized rate (× `per`). | `1312.5` |
 | `conf_int` | `ArrayRef` | Fay-Feuer gamma `[lower, upper]` (× `per`). | `[1097.8, 1569.6]` |
-| `se` | `Double` | Standard error of the standardized rate (× `per`). | |
+| `se` | `Double` | Standard error of the standardized rate (× `per`). | `114.4` |
 | `conf_level` | `Double` | Confidence level used. | `0.95` |
 | `per` | `Number` | The scale factor applied. | `100000` |
 
