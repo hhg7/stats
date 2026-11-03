@@ -2653,24 +2653,28 @@ sub qcut {
 	_usage_error('qcut', 'nothing to return (set edges => 1 or codes => 1)')
 		unless $want_edges || $want_codes;
 
-	# does the column contain any NA?
+	# does the column contain any NA?  undef and NaN both are, as NaN is to
+	# pandas: up to 0.3413 a NaN was binned as a number, and every edge it
+	# touched came back NaN (qcut([1, 2, 3, 4, NaN], 4) gave 1 2 3 NaN NaN).
+	my $is_na = sub { my $x = shift; no warnings 'numeric'; return !defined($x) || $x != $x };
 	my $has_na = 0;
-	for my $x (@$data) { if (!defined $x) { $has_na = 1; last } }
+	for my $x (@$data) { if ($is_na->($x)) { $has_na = 1; last } }
 
 	my ($codes, $edges, @pos);
 	if ($want_codes && $has_na) {
 		# strip NA, remember positions, scatter codes back afterwards
 		my @vals;
 		for my $i (0 .. $#$data) {
-			next unless defined $data->[$i];
-			push @vals, $data->[$i] + 0;
+			my $x = $data->[$i];
+			next if $is_na->($x);
+			push @vals, $x + 0;
 			push @pos,  $i;
 		}
 		die "qcut: no non-missing values\n" unless @vals;
 		($codes, $edges) = _qcut_core(\@vals, $probs, $drop, 1);
 	} elsif ($has_na) {
 		# edges only: drop NA so cutpoints ignore them, positions don't matter
-		my @vals = grep { defined } @$data;
+		my @vals = grep { !$is_na->($_) } @$data;
 		die "qcut: no non-missing values\n" unless @vals;
 		($codes, $edges) = _qcut_core(\@vals, $probs, $drop, 0);
 	} else {
@@ -5554,6 +5558,10 @@ sub interpolate {
 		for my $v (@x) {
 			die "interpolate: 'x' coordinates must all be defined and numeric\n"
 				unless defined $v && looks_like_number($v);
+			# pandas raises NotImplementedError for a NaN in the index ("Interpolation
+			# with NaNs in the index has not been implemented"); a NaN here would
+			# slip past the increasing test below, since every comparison with it is false
+			die "interpolate: 'x' coordinates must not be NaN\n" if $v != $v;
 		}
 		if (defined $arg{x}) {
 			for my $i (1 .. $#x) {
@@ -9777,6 +9785,11 @@ Edgeworth series for 10 ≤ I<n> ≤ 1290, and by the asymptotic I<t> above that
 whenever the data contain ties. Passing C<< exact =E<gt> 1 >> never enumerates past
 I<n> = 9, because I<n>! is 6.2 × 10²³ by I<n> = 24.
 
+C<< continuity =E<gt> 1 >> corrects that asymptotic I<t> as R does, by adding 1 to
+I<n>(I<n>² − 1)/6 before ρ is formed from I<S>; the exact paths ignore it, as in
+R. Before 0.3414 it was ignored on every path, with a warning that R ignores it
+too, which R does not.
+
 C<statistic> is Spearman's I<S> on every one of those paths, formed the way R
 forms it — C<(n³ − n)(1 − ρ)/6>, which is the sum of squared rank differences
 only when there are no ties. One difference from R remains, and it is not about
@@ -10889,6 +10902,11 @@ tail of C<pchisq($df2 / $x, $df2)>, and with both infinite I<F> is a step at 1
 (C<0.5> at 1 itself); C<qf> inverts each. Up to 0.33 none of this was handled:
 C<qt(0.975, Inf)> was C<3.1e-61> and C<pf(0.5, 3, Inf)> was C<1>. A finite but huge
 df is computed exactly rather than by R's C<< df E<gt> 4e5 >> approximation in C<qf>.
+
+On the log scale with one shape at least 1000 and the other at most 1, the
+incomplete beta follows R's C<bratio()> in using its power series for a tiny
+variable. Up to 0.3413 C<< pt(-3000, 5000, log =E<gt> 1) >> was C<NaN> and
+C<< pt(-960, 2508.3, log =E<gt> 1) >> was wrong from the sixth digit.
 
 C<pbinom>'s C<size> must be a whole number within R's own fuzz,
 C<1e-9 * max(1, |size|)>, and is then rounded, so C<pbinom(3, 10 + 1e-10, 0.5)>
@@ -13383,7 +13401,9 @@ is never modified.
 
 Interpolation follows pandas exactly: every gap is filled from the method, then
 cells that C<limit> / C<limit_direction> / C<limit_area> forbid are blanked back to
-NA. Only numeric cells B<anchor> a fill; a defined non-numeric cell is preserved
+NA. A NaN cell is missing data, as in pandas, so it is a gap like undef (it is
+filled, and left as NaN where a limit forbids filling it). Only numeric
+non-NaN cells B<anchor> a fill; a defined non-numeric cell is preserved
 (and, for the piecewise-local methods, blocks interpolation across it).
 
 B<Interior gaps> (anchors on both sides) are always filled. B<Leading/trailing
@@ -13414,7 +13434,8 @@ existing length (ragged HoA columns and short AoA rows are not extended).
 By default rows are equally spaced (C<0, 1, 2, …>). Pass C<x> to interpolate
 against real abscissae — either an arrayref (one coordinate per row) or a column
 name/index whose numeric values are the coordinates. C<x> must be strictly
-increasing and is used by every method except plain C<linear> semantics (use
+increasing, must not contain NaN (pandas refuses a NaN index too, so
+C<interpolate> croaks), and is used by every method except plain C<linear> semantics (use
 C<index>/C<values> for a line on unequal spacing).
 
  # linear fit on unequal spacing
@@ -14035,6 +14056,15 @@ neither main effect present codes both in full and spans the whole
 cross-classification.
 
 If your data contains missing numbers (C<NA> or C<undef>), C<lm> handles listwise deletion dynamically to ensure mathematical integrity before fitting. A row whose categorical value is missing is dropped the same way.
+
+The fit factors the design matrix itself (AS 274 Givens rotations, refined by
+one step on the residuals), as R's QR does, rather than solving the normal
+equations, so it loses digits only in proportion to the condition number of X,
+not to its square. Columns are tested left to right, and one is aliased —
+reported as C<NaN>, R's C<NA> — when what the columns before it leave of it has a
+norm below 1e-7 of its own: C<lm.fit()>'s C<tol>. C<glm> uses the same fit on each
+iteration's weighted least squares, with C<glm.fit()>'s tolerance,
+C<min(1e-7, epsilon/1000)>.
 
 A term is removed with C<->, as in R: C<y ~ x*z - x:z> fits C<y ~ x + z>,
 C<y ~ . - id> fits every column but C<id> (and the response), and C<- x*z> takes
@@ -14989,7 +15019,9 @@ Corrects a family of p-values for multiple testing, like R's C<p.adjust>. The
 methods available are C<holm> (the default), C<hochberg>, C<hommel>,
 C<bonferroni>, C<BH>, C<BY>, C<fdr> (a synonym for C<BH>) and C<none>. Method names
 are case-insensitive, and the full C<Benjamini-Hochberg> /
-C<Benjamini-Yekutieli> spellings are accepted.
+C<Benjamini-Yekutieli> spellings are accepted. A value outside [0, 1] is
+adjusted exactly as R does it: Holm's running maximum has no floor, so
+C<p_adjust([-1, 0.5, 2], 'holm')> is C<-3 1 1>, and C<hommel> is not clamped to 1.
 
  my @q = p_adjust(\@pvalues, $method);          # array in, array out
  my $q = p_adjust($df, $method, columns => ..); # a frame in, a frame out
@@ -15860,9 +15892,10 @@ error.
 
 =back
 
-C<undef> entries are treated as missing (NA): they are skipped when computing
-cutpoints and, when codes are requested, come back as C<undef> in their original
-positions.
+C<undef> and C<NaN> entries are treated as missing (NA), as pandas treats C<NaN>:
+they are skipped when computing cutpoints and, when codes are requested, come
+back as C<undef> in their original positions. Before 0.3414 a C<NaN> was binned
+as a number, and every edge it touched came back C<NaN>.
 
 Only the options listed below are read; a misspelled one is ignored rather than
 refused, so C<< code =E<gt> 1 >> (no C<s>) quietly hands back edges instead of codes.
@@ -16275,7 +16308,10 @@ Create a binomial distribution of numbers
 
 C<n>, C<size> and C<prob> are all required, as in R. C<prob> must be a number in
 C<[0, 1]>. As in R, a C<prob> of C<NaN> or a C<size> that is not a whole number
-gives C<NaN> for every draw, with the warning "rbinom: NAs produced".
+gives C<NaN> for every draw, with the warning "rbinom: NAs produced". C<size> is
+a trial count, so it is not held to the bound on C<n>: it may be as large as
+the perl's C<IV_MAX> (about 9.2e18 on a 64-bit-integer perl, 2147483647 on a
+32-bit one) and croaks beyond that.
 
 =head2 read_table
 

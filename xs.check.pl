@@ -98,6 +98,7 @@ my %svpv_audited = (
 	'const char *s = SvPV(ck, len);'                   => 'pregexec() is handed ck as well, which tells it the encoding',
 	'STRLEN kl; const char *k = SvPV(ks, kl);'         => 'filter(): klens[], set from SvUTF8 beside it, is what reaches the hash',
 	'const char *ep = SvPV(ERRSV, el);'                => 'col2col(): the copy made from it takes SvUTF8 from $@',
+	'const char *g_str = SvPV(g_el, glen);'            => 'kruskal_test(): klen, set from SvUTF8 on the next line, is what reaches the hash',
 	'const char *key = SvPV(tv, klen);'                => 'mode(): the hash length after it carries SvUTF8',
 	'const char *key = SvPV(arg, klen);'               => 'mode(): the hash length after it carries SvUTF8',
 	'const char*key = SvPV(arg2, klen);'               => 'value_counts(): the hash length after it carries SvUTF8',

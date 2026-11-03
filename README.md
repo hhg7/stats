@@ -2094,6 +2094,11 @@ Edgeworth series for 10 ≤ *n* ≤ 1290, and by the asymptotic *t* above that o
 whenever the data contain ties. Passing `exact => 1` never enumerates past
 *n* = 9, because *n*! is 6.2 × 10²³ by *n* = 24.
 
+`continuity => 1` corrects that asymptotic *t* as R does, by adding 1 to
+*n*(*n*² − 1)/6 before ρ is formed from *S*; the exact paths ignore it, as in
+R. Before 0.3414 it was ignored on every path, with a warning that R ignores it
+too, which R does not.
+
 `statistic` is Spearman's *S* on every one of those paths, formed the way R
 forms it — `(n³ − n)(1 − ρ)/6`, which is the sum of squared rank differences
 only when there are no ties. One difference from R remains, and it is not about
@@ -2819,6 +2824,11 @@ tail of `pchisq($df2 / $x, $df2)`, and with both infinite *F* is a step at 1
 (`0.5` at 1 itself); `qf` inverts each. Up to 0.33 none of this was handled:
 `qt(0.975, Inf)` was `3.1e-61` and `pf(0.5, 3, Inf)` was `1`. A finite but huge
 df is computed exactly rather than by R's `df > 4e5` approximation in `qf`.
+
+On the log scale with one shape at least 1000 and the other at most 1, the
+incomplete beta follows R's `bratio()` in using its power series for a tiny
+variable. Up to 0.3413 `pt(-3000, 5000, log => 1)` was `NaN` and
+`pt(-960, 2508.3, log => 1)` was wrong from the sixth digit.
 
 `pbinom`'s `size` must be a whole number within R's own fuzz,
 `1e-9 * max(1, |size|)`, and is then rounded, so `pbinom(3, 10 + 1e-10, 0.5)`
@@ -4326,7 +4336,9 @@ is never modified.
 
 Interpolation follows pandas exactly: every gap is filled from the method, then
 cells that `limit` / `limit_direction` / `limit_area` forbid are blanked back to
-NA. Only numeric cells **anchor** a fill; a defined non-numeric cell is preserved
+NA. A NaN cell is missing data, as in pandas, so it is a gap like undef (it is
+filled, and left as NaN where a limit forbids filling it). Only numeric
+non-NaN cells **anchor** a fill; a defined non-numeric cell is preserved
 (and, for the piecewise-local methods, blocks interpolation across it).
 
 **Interior gaps** (anchors on both sides) are always filled. **Leading/trailing
@@ -4351,7 +4363,8 @@ existing length (ragged HoA columns and short AoA rows are not extended).
 By default rows are equally spaced (`0, 1, 2, …`). Pass `x` to interpolate
 against real abscissae — either an arrayref (one coordinate per row) or a column
 name/index whose numeric values are the coordinates. `x` must be strictly
-increasing and is used by every method except plain `linear` semantics (use
+increasing, must not contain NaN (pandas refuses a NaN index too, so
+`interpolate` croaks), and is used by every method except plain `linear` semantics (use
 `index`/`values` for a line on unequal spacing).
 
     # linear fit on unequal spacing
@@ -4852,6 +4865,15 @@ neither main effect present codes both in full and spans the whole
 cross-classification.
 
 If your data contains missing numbers (`NA` or `undef`), `lm` handles listwise deletion dynamically to ensure mathematical integrity before fitting. A row whose categorical value is missing is dropped the same way.
+
+The fit factors the design matrix itself (AS 274 Givens rotations, refined by
+one step on the residuals), as R's QR does, rather than solving the normal
+equations, so it loses digits only in proportion to the condition number of X,
+not to its square. Columns are tested left to right, and one is aliased —
+reported as `NaN`, R's `NA` — when what the columns before it leave of it has a
+norm below 1e-7 of its own: `lm.fit()`'s `tol`. `glm` uses the same fit on each
+iteration's weighted least squares, with `glm.fit()`'s tolerance,
+`min(1e-7, epsilon/1000)`.
 
 A term is removed with `-`, as in R: `y ~ x*z - x:z` fits `y ~ x + z`,
 `y ~ . - id` fits every column but `id` (and the response), and `- x*z` takes
@@ -5528,7 +5550,9 @@ Corrects a family of p-values for multiple testing, like R's `p.adjust`. The
 methods available are `holm` (the default), `hochberg`, `hommel`,
 `bonferroni`, `BH`, `BY`, `fdr` (a synonym for `BH`) and `none`. Method names
 are case-insensitive, and the full `Benjamini-Hochberg` /
-`Benjamini-Yekutieli` spellings are accepted.
+`Benjamini-Yekutieli` spellings are accepted. A value outside [0, 1] is
+adjusted exactly as R does it: Holm's running maximum has no floor, so
+`p_adjust([-1, 0.5, 2], 'holm')` is `-3 1 1`, and `hommel` is not clamped to 1.
 
     my @q = p_adjust(\@pvalues, $method);          # array in, array out
     my $q = p_adjust($df, $method, columns => ..); # a frame in, a frame out
@@ -6057,9 +6081,10 @@ value is always included.
     and any probability outside `[0, 1]` is clamped into it rather than being an
     error.
 
-`undef` entries are treated as missing (NA): they are skipped when computing
-cutpoints and, when codes are requested, come back as `undef` in their original
-positions.
+`undef` and `NaN` entries are treated as missing (NA), as pandas treats `NaN`:
+they are skipped when computing cutpoints and, when codes are requested, come
+back as `undef` in their original positions. Before 0.3414 a `NaN` was binned
+as a number, and every edge it touched came back `NaN`.
 
 Only the options listed below are read; a misspelled one is ignored rather than
 refused, so `code => 1` (no `s`) quietly hands back edges instead of codes.
@@ -6329,7 +6354,10 @@ Create a binomial distribution of numbers
 
 `n`, `size` and `prob` are all required, as in R. `prob` must be a number in
 `[0, 1]`. As in R, a `prob` of `NaN` or a `size` that is not a whole number
-gives `NaN` for every draw, with the warning "rbinom: NAs produced".
+gives `NaN` for every draw, with the warning "rbinom: NAs produced". `size` is
+a trial count, so it is not held to the bound on `n`: it may be as large as
+the perl's `IV_MAX` (about 9.2e18 on a 64-bit-integer perl, 2147483647 on a
+32-bit one) and croaks beyond that.
 
 ## read_table
 
