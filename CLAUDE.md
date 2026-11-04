@@ -433,6 +433,22 @@ Common to all of these targets:
 
 Windows specifically:
 
+- A C function that calls any libc function `XSUB.h` redefines takes
+  `pTHX_`, even a small static helper that never touches an SV. Every Windows perl defines `PERL_IMPLICIT_SYS`
+  (and `MULTIPLICITY`), and under it `XSUB.h` rewrites `malloc`, `free`,
+  `realloc`, `calloc`, `fopen`, `getenv`, `exit`, the socket calls and much
+  of the rest of libc into `PerlMem_*`, `PerlIO_*`, `PerlEnv_*` and so on,
+  which reach the host through `my_perl`. Without `pTHX_` the function
+  compiles on every perl here and fails on every Windows perl with
+  "'my_perl' undeclared". 0.3414 shipped that way: `alloc_probe_ok()` called
+  `malloc()` with no context, and a Strawberry 5.42.3 smoker could not build
+  it. No Linux perl can be configured with `PERL_IMPLICIT_SYS`, so
+  `./test.all.perls.pl` emulates it: before the builds, it syntax-checks
+  `LikeR.c` with `-DPERL_IMPLICIT_SYS -DSOCKET=int` against the newest
+  threaded perl's headers and reports a `win32-sys` row in the summary. A
+  FAIL there is a Windows build failure, not a quirk of the emulation.
+  Against 0.3414 it reports exactly the smoker's error and nothing else.
+  `--no-win-sys` skips it, but do not skip it for a change to `LikeR.xs`.
 - No POSIX-only headers or functions: no `<unistd.h>`, `<sys/time.h>`, or
   `<strings.h>`; no `strcasecmp`/`strncasecmp` (there is `str_ieq_ascii()` in
   `LikeR.xs` for the case-insensitive keyword compares), no `fork`, no

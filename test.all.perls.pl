@@ -67,6 +67,7 @@ my ($par, $keep_work);
 # On by default: this is the axis that let 0.31 reach CPAN broken, and an
 # opt-in check is one nobody remembers to opt in to.  --no-x87 skips it.
 my $x87 = 1;
+my $win_sys = 1;   # on by default for the same reason; see win_sys_check()
 my $ncpu  = cpu_count();
 $install  = 1; # make install, as compile.sh does
 $clean    = 1;
@@ -102,6 +103,7 @@ GetOptions(
 	'keep-work!'    => \$keep_work,
 	'optimize=s'    => \$optimize,
 	'x87!'          => \$x87,
+	'win-sys!'      => \$win_sys,
 	'log-dir=s'     => \$log_dir,
 	'quiet|q'       => \$quiet,
 	'list|l'        => \$list,
@@ -158,6 +160,9 @@ options:
                        (default: $jobs_default at -P $par_default, $budget at -P 1)
       --optimize STR   OPTIMIZE= passed to Makefile.PL (default: $optimize)
       --no-x87         skip the extra x87 row (see below)
+      --no-win-sys     skip the Windows host-API check: LikeR.c compiled with
+                       -DPERL_IMPLICIT_SYS against the newest threaded perl,
+                       which catches a libc call in a function with no pTHX_
       --log-dir DIR    where per-version logs go (default: $log_dir)
   -q, --quiet          only write logs; do not echo build output.  implied by
                        -P > 1, where interleaved output would be unreadable
@@ -395,6 +400,57 @@ die "$0: no Makefile.PL in " . getcwd() . " - run this from the distribution roo
 
 mkdirp($log_dir);
 my $stamp = strftime '%Y%m%d-%H%M%S', localtime;
+
+# ------------------------------------------------- Windows host-API check --
+
+# Every Windows perl defines PERL_IMPLICIT_SYS, and under it XSUB.h rewrites
+# malloc, free, fopen, getenv, the socket calls and much of the rest of libc
+# into PerlMem_*, PerlIO_*, PerlEnv_* and so on, which reach the host through
+# my_perl.  A static function that calls one of them without pTHX_ therefore
+# compiles on every perl here and fails on every Windows perl: 0.3414 reached
+# CPAN with alloc_probe_ok() calling malloc() that way, and a Strawberry
+# 5.42.3 smoker could not build it.  No Linux perl can be configured with
+# PERL_IMPLICIT_SYS, but the newest threaded perl's headers accept it once
+# SOCKET -- a Win32 type iperlsys.h names -- is stubbed, so LikeR.c is
+# syntax-checked that way.  Against 0.3414 it reports exactly the smoker's
+# error, 'my_perl' undeclared in alloc_probe_ok, and nothing else.  It takes
+# seconds and runs whichever perls -p selects; --no-win-sys skips it.
+sub win_sys_check {
+	my ($thr) = reverse grep { facts($_)->{known} && facts($_)->{threads} } @installed;
+	return { skipped => 'no threaded perl installed' } unless defined $thr;
+	my $perl = File::Spec->catfile($perls_dir, $thr, 'bin', 'perl');
+	open my $cfg, '-|', $perl, '-MConfig', '-e',
+		'print join "\t", @Config{qw(cc ccflags archlibexp privlibexp)}'
+		or return { perl => $thr, failed => "cannot run $perl: $!" };
+	my ($cc, $ccflags, $arch, $priv) = split /\t/, scalar <$cfg>;
+	close $cfg;
+	my $log = File::Spec->catfile($log_dir, "win32-sys.$stamp.log");
+	open my $logfh, '>', $log or return { perl => $thr, failed => "cannot write $log: $!" };
+	my $dir = File::Temp->newdir;
+	my $c   = File::Spec->catfile($dir, 'LikeR.c');
+	# xsubpp writes the C to stdout; it is read through a list-form pipe so that
+	# no shell sees the paths, and its own warnings still reach the terminal.
+	open my $xs, '-|', $perl, "$priv/ExtUtils/xsubpp",
+		'-typemap', "$priv/ExtUtils/typemap", 'LikeR.xs'
+		or return { perl => $thr, log => $log, failed => "cannot run xsubpp: $!" };
+	open my $out, '>', $c or return { perl => $thr, log => $log, failed => "cannot write $c: $!" };
+	print {$out} $_ while <$xs>;
+	close $out;
+	close $xs or return { perl => $thr, log => $log, failed => 'xsubpp' };
+	my $was_quiet = $quiet;
+	$quiet = 1;   # the log has it all, and the summary row says where
+	my ($code) = run_cmd([ split(' ', $cc), '-c', '-std=c99', '-fsyntax-only',
+		split(' ', $ccflags), '-DPERL_IMPLICIT_SYS', '-DSOCKET=int',
+		'-DVERSION="0"', '-DXS_VERSION="0"', '-I.', "-I$arch/CORE", $c ], $logfh);
+	$quiet = $was_quiet;
+	close $logfh;
+	return { perl => $thr, log => $log, ($code ? (failed => 'cc -DPERL_IMPLICIT_SYS') : ()) };
+}
+my $winsys;
+if ($win_sys) {
+	print "-- Windows host-API check (PERL_IMPLICIT_SYS)\n";
+	$winsys = win_sys_check();
+}
 
 # ------------------------------------------------------------- parallelism --
 
@@ -830,6 +886,13 @@ for my $r (@results) {
 			: ($r->{result} ? "Result: $r->{result}" : 'no test summary')),
 		;
 }
+if ($winsys) {
+	printf "%-16s %-11s %-8s %6s  %-6s %s\n", 'win32-sys', $winsys->{perl} // '-',
+		($winsys->{skipped} ? 'SKIP' : $winsys->{failed} ? 'FAIL' : 'PASS'), '-', '-',
+		$winsys->{skipped} ? $winsys->{skipped}
+		: $winsys->{failed} ? "failed at '$winsys->{failed}' - see " . ($winsys->{log} // 'the terminal')
+		: 'compiles under PERL_IMPLICIT_SYS';
+}
 print '-' x 72, "\n";
 my $skipped = @targets - @results;
 printf "%d/%d perl(s) passed%s in %.1fs.  Logs in %s\n",
@@ -883,4 +946,4 @@ print series_note() unless @only;
 END
 }
 
-exit($bad || $skipped ? 1 : 0);
+exit($bad || $skipped || ($winsys && $winsys->{failed}) ? 1 : 0);
