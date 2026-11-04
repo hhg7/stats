@@ -130,7 +130,7 @@ for my $c (@CASES) {
 	cmp_ok($hi, '<=', $size, "size=$size p=$p: no variate above size");
 }
 
-# ------------------------------------------------------ the short circuits
+# the short circuits
 {
 	is_deeply(rbinom(n => 4, size => 0,  prob => 0.5), [0, 0, 0, 0], 'size = 0 is all 0');
 	is_deeply(rbinom(n => 4, size => 7,  prob => 0),   [0, 0, 0, 0], 'prob = 0 is all 0');
@@ -142,7 +142,7 @@ for my $c (@CASES) {
 	is_deeply(rbinom(n => 0, size => 5, prob => 0.5), [], 'n = 0 returns nothing');
 }
 
-# ------------------------------------------------- size is a count of trials
+# size is a count of trials
 #
 # `size` is not an element count, so the 2^48 sanity bound on n does not apply
 # to it: R's rbinom(3, 1e15, 0.3) draws, and so must this (up to 0.3413 it
@@ -189,7 +189,7 @@ for my $c (@CASES) {
 	like($@, qr/n is too large/, 'n keeps its 2^48 bound');
 }
 
-# ------------------------------------------------------------ reproducible
+# reproducible
 #
 # srand() still governs the stream, which is the contract; WHICH numbers it
 # gives is the algorithm's business and is deliberately not pinned here.
@@ -201,7 +201,7 @@ for my $c (@CASES) {
 	isnt(join(',', @$a), join(',', @$c), 'a different seed gives different variates');
 }
 
-# ---------------------------------------------------- the reflection is exact
+# the reflection is exact
 #
 # BTPE draws for min(p, 1-p) and returns n - ix when p > 0.5, so the two must
 # be the same stream mirrored.  This is also what makes the p > 0.5 cases above
@@ -223,7 +223,7 @@ for my $c (@CASES) {
 	          'prob and 1-prob mirror each other on the same seed');
 }
 
-# ------------------------------------------------------- cost, not distribution
+# cost, not distribution
 #
 # The point of the change.  1000 variates at size = 1e9 is 1e12 Bernoulli
 # trials under the old loop -- hours -- and about forty uniforms in total under
