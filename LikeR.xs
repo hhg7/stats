@@ -22216,6 +22216,19 @@ breaks them.  It was a selection sort, O(m^2) in the m = k(k-1)/2 pairs and so
 O(k^4) in the groups: 3.16 s at k = 400.
 
 ord is SAVEFREEPV()d, so the caller is inside ENTER/LEAVE.*/
+/*Sidak's 1 - (1 - p)^m, as -expm1(m * log1p(-p)).
+
+The literal form cancels: 1 - p rounds to 1 once p is below NV_EPSILON / 2, so
+up to 0.3415 every Sidak and Holm-Sidak adjustment of a p-value under about
+1e-16 came back as exactly 0 -- dunn_test() on four well-separated groups of
+200 reported 0 where Bonferroni gave 2.96e-17 -- and one of 1e-10 kept only
+about six correct digits.  statsmodels' multipletests() uses this same form
+for 's' and 'hs'.  p = 1 still gives 1, since log1p(-1) is -Inf.  The result
+is 0.0 minus expm1() rather than its negation so that p = 0 gives +0, not -0.*/
+static NV dunn_sidak(NV p, NV m) {
+	return 0.0 - nv_expm1(m * nv_log1p(-p));
+}
+
 static void dunn_padjust(pTHX_ const NV *restrict p, size_t m, const char *restrict meth, NV *restrict adj) {
 	if (!dunn_meth_known(meth))	//before the allocation, so the croak leaks nothing
 		croak("dunn_test: unknown method '%s' (none, bonferroni, sidak, holm, hs, bh, by)", meth);
@@ -22235,13 +22248,13 @@ static void dunn_padjust(pTHX_ const NV *restrict p, size_t m, const char *restr
 	} else if (strEQ(meth, "bonferroni")) {
 		for (size_t i = 0; i < mf; i++) { NV v = ord[i].v * M; adj[ord[i].i] = v < 1.0 ? v : 1.0; }
 	} else if (strEQ(meth, "sidak")) {
-		for (size_t i = 0; i < mf; i++) { NV v = 1.0 - nv_pow(1.0 - ord[i].v, M); adj[ord[i].i] = v < 1.0 ? v : 1.0; }
+		for (size_t i = 0; i < mf; i++) { NV v = dunn_sidak(ord[i].v, M); adj[ord[i].i] = v < 1.0 ? v : 1.0; }
 	} else if (strEQ(meth, "holm")) {
 		NV cummax = 0.0;
 		for (size_t i = 0; i < mf; i++) { NV v = ord[i].v * (NV)(mf - i); if (v > cummax) cummax = v; adj[ord[i].i] = cummax < 1.0 ? cummax : 1.0; }
 	} else if (strEQ(meth, "hs")) {   //Holm-Sidak
 		NV cummax = 0.0;
-		for (size_t i = 0; i < mf; i++) { NV v = 1.0 - nv_pow(1.0 - ord[i].v, (NV)(mf - i)); if (v > cummax) cummax = v; adj[ord[i].i] = cummax < 1.0 ? cummax : 1.0; }
+		for (size_t i = 0; i < mf; i++) { NV v = dunn_sidak(ord[i].v, (NV)(mf - i)); if (v > cummax) cummax = v; adj[ord[i].i] = cummax < 1.0 ? cummax : 1.0; }
 	} else if (strEQ(meth, "bh")) {
 		NV cummin = 1.0;
 		for (size_t i = mf; i-- > 0; ) { NV v = ord[i].v * M / ((NV)i + 1.0); if (v < cummin) cummin = v; adj[ord[i].i] = cummin < 1.0 ? cummin : 1.0; }
