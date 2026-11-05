@@ -264,6 +264,10 @@ The local matrix under `/home/con/perl5/perlbrew/perls/`, by `$Config{nvtype}`:
 - `5.44.0-quadmath` — `__float128`, NVgf `"Qg"`
 - `5.44.0-i686` — `double`, but a 32-bit build: `ivsize=4`, so `IV_MAX` is
   2147483647. See "The IV is not always 64 bits" below.
+- `5.44.0-i686-64int` — the same 32-bit build with `-Duse64bitint`:
+  `ivsize=8` but `ptrsize=4`, so a `size_t` is narrower than an `IV`. This is
+  CPAN's `i686-linux-64int`, and `./test.all.perls.pl` lists it as
+  `double/iv8p4`. See "A size_t is not always as wide as an IV" below.
 - `5.16.3-thr-ld` — `long double`, `useithreads`, `usemultiplicity`,
   `USE_REENTRANT_API`, and the only threaded perl here older than 5.20. See
   "Threads change which libc function perl calls" below for why the age
@@ -338,6 +342,23 @@ has no such perl. Two traps are worth knowing before rebuilding it:
   optional, so `-Dlibswanted='pthread dl m util c'` avoids needing
   `libcrypt-dev:i386`. The only casualty is the `crypt()` builtin, which this
   module never calls.
+
+### A size_t is not always as wide as an IV
+
+The IV width and the pointer width are separate axes. A 32-bit perl built with
+`-Duse64bitint` has an 8-byte `IV` and a 4-byte `size_t`, so an integer the
+caller hands in can be in range for `IV` and still truncate at 2\*\*32 the
+moment it is stored in a `size_t`. `size_t` is right for element counts,
+which a 32-bit address space bounds anyway. It is wrong for a quantity that
+is not a count of things in memory, such as `rbinom()`'s `size` (a trial
+count): that is a `UV`/`IV`.
+
+0.3414 failed `t/rbinom.dist.t` 85–86 on three `i686-linux-64int` smokers for
+exactly this. `rbinom()` capped `size` with `(size_t)IV_MAX`, which on that
+build is 2\*\*32−1, and refused `size => 1e15`. The plain `i686-linux` perls
+beside them passed. `5.44.0-i686-64int` reproduces it, failing the same two
+subtests, and was built with the iv4 recipe with only `-Uuse64bitint` changed
+to `-Duse64bitint`.
 
 ### Threads change which libc function perl calls
 

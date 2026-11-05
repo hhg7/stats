@@ -12,6 +12,15 @@ Revision history for Stats-LikeR
    correct digits. The adjustment is now -expm1(m * log1p(-p)), the form
    statsmodels' multipletests() uses.
 
+ [rbinom()]
+
+ - size is accepted up to IV_MAX on a 32-bit perl built with 64-bit
+   integers (i686-linux-64int). Such a perl has an 8-byte IV and a 4-byte
+   size_t, and rbinom() held size in a size_t, so it refused size => 1e15
+   with "size is too large" where every other perl with 64-bit integers
+   draws, as R does. size is now carried as a UV. This failed
+   t/rbinom.dist.t on three CPAN smokers for 0.3414.
+
  [Tests]
 
  - t/dunn_test.statsmodels.t checks all seven of dunn_test()'s methods

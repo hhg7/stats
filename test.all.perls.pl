@@ -229,6 +229,12 @@ die "$0: no perls found in $perls_dir\n" unless @targets;
 # perl with a 32-bit IV could see (seq() cast an NV past IV_MAX; see the
 # coverage note printed below the summary).  Reporting it puts the gap on the
 # screen every run instead of leaving it to a smoker.
+#
+# ptrsize is probed alongside it because the two are independent, and a value
+# can fit one and not the other.  A 32-bit perl built -Duse64bitint has an
+# 8-byte IV and a 4-byte size_t, so code that holds a perl integer in a size_t
+# truncates it at 2**32 there and nowhere else: rbinom() refused size => 1e15
+# on exactly that smoker (i686-linux-64int, perl 5.32.1) in 0.3414.
 my %facts;
 sub facts {
 	my $version = tgt_perl(shift);   # a variant is the same interpreter
@@ -236,14 +242,14 @@ sub facts {
 	my $perl = File::Spec->catfile($perls_dir, $version, 'bin', 'perl');
 	# series: the minor version (32 for 5.32.1), from $] rather than from the
 	# directory name for the same reason; 0 = unknown.
-	my %f = (nv => '?', iv => 0, threads => 0, known => 0, series => 0);
+	my %f = (nv => '?', iv => 0, ptr => 0, threads => 0, known => 0, series => 0);
 	if (open my $fh, '-|', $perl, '-MConfig', '-e',
 			'print "$Config{nvtype}\t", ($Config{useithreads} ? 1 : 0),'
-			. '"\t$Config{ivsize}\t$]"') {
+			. '"\t$Config{ivsize}\t$Config{ptrsize}\t$]"') {
 		my $line = <$fh>;
 		close $fh;
-		if (defined $line && $line =~ /^(\S[^\t]*)\t([01])\t(\d+)\t5\.(\d{3})/) {
-			%f = (nv => $1, threads => $2, iv => $3, known => 1, series => 0 + $4);
+		if (defined $line && $line =~ /^(\S[^\t]*)\t([01])\t(\d+)\t(\d+)\t5\.(\d{3})/) {
+			%f = (nv => $1, threads => $2, iv => $3, ptr => $4, known => 1, series => 0 + $5);
 		}
 	}
 	$f{quadmath} = $f{nv} eq '__float128';
@@ -259,9 +265,11 @@ sub nv_label {
 		'__float128' => 'quadmath');
 	# The IV width is named only when it is not the 8 every perl here has, so
 	# a 32-bit-IV build is the row that looks different rather than one more
-	# column of 8s.
+	# column of 8s.  Likewise the pointer width, only when it is narrower than
+	# the IV: "double/iv8p4" is a 32-bit -Duse64bitint build.
 	return ($short{ $f->{nv} } || $f->{nv}) . ($f->{threads} ? '-thr' : '')
-		. ($f->{known} && $f->{iv} != 8 ? "/iv$f->{iv}" : '');
+		. ($f->{known} && $f->{iv} != 8 ? "/iv$f->{iv}" : '')
+		. ($f->{known} && $f->{iv} == 8 && $f->{ptr} < $f->{iv} ? "/iv8p$f->{ptr}" : '');
 }
 
 # A target is a perl, optionally with a build variant after a '+'.  Everything
@@ -525,10 +533,12 @@ sub prereqs {
 	local $/;
 	my $src = <$fh>;
 	close $fh;
-	return () unless $src =~ /"PREREQ_PM"\s*=>\s*\{(.*?)\}/s;
-	my $block = $1;
+	# TEST_REQUIRES as well as PREREQ_PM: Test::Exception and Test::LeakTrace
+	# live there, and reading PREREQ_PM alone left --deps installing neither,
+	# so a newly built perl failed 131 test files on "Can't locate".
+	my @blocks = $src =~ /"(?:PREREQ_PM|TEST_REQUIRES|BUILD_REQUIRES)"\s*=>\s*\{(.*?)\}/sg;
 	my %seen;
-	return grep { !$seen{$_}++ } ($block =~ /"([\w:]+)"\s*=>/g);
+	return grep { !$seen{$_}++ } map { /"([\w:]+)"\s*=>/g } @blocks;
 }
 my @prereqs = prereqs();
 
@@ -932,7 +942,7 @@ print series_note() unless @only;
 #     as optional, so trimming libswanted avoids needing libcrypt-dev:i386.
 {
 	my @iv4 = grep { facts($_)->{known} && facts($_)->{iv} == 4 } @targets;
-	print <<'END' unless @iv4;
+	print <<'END' unless @iv4 || @only;   # -p narrows @targets, not the matrix
 -- no 32-bit-IV perl in the matrix: an NV cast past IV_MAX cannot fail here.
    To add one (needs root once, for a 32-bit libc):
      sudo apt install gcc-multilib
@@ -943,6 +953,28 @@ print series_note() unless @only;
        -Dplibpth='/usr/lib/i386-linux-gnu /usr/lib32 /lib/i386-linux-gnu'
    Then --deps once, for Test::Exception and Test::LeakTrace.  It is picked up
    automatically after that, and shows as "double/iv4".
+END
+}
+
+# The other 32-bit configuration: the same build with -Duse64bitint, which is
+# what CPAN smokers call i686-linux-64int.  Its IV is 8 bytes and its size_t 4,
+# so the iv4 row above cannot stand in for it -- there a value past 2**32 is
+# already past IV_MAX and refused for that reason.  0.3414's rbinom() kept its
+# trial count in a size_t and refused size => 1e15 on three such smokers while
+# passing on the plain i686-linux ones beside them.  The recipe is the iv4 one
+# with the use64bitint flag flipped; both traps noted above apply unchanged.
+{
+	my @narrow = grep { facts($_)->{known} && facts($_)->{ptr} < facts($_)->{iv} } @targets;
+	print <<'END' unless @narrow || @only;
+-- no perl with a 64-bit IV and 32-bit pointers in the matrix: a perl integer
+   held in a size_t cannot be seen truncating at 2**32 here.  To add one:
+     sudo apt install gcc-multilib
+     perlbrew install perl-5.44.0 --as 5.44.0-i686-64int -j 8 -n \
+       -Dcc='gcc -m32' -Dld='gcc -m32' -Duse64bitint -Uuse64bitall \
+       -Dlibswanted='pthread dl m util c' \
+       -Dlibpth='/usr/lib/i386-linux-gnu /usr/lib32 /lib/i386-linux-gnu' \
+       -Dplibpth='/usr/lib/i386-linux-gnu /usr/lib32 /lib/i386-linux-gnu'
+   Then --deps once.  It shows as "double/iv8p4".
 END
 }
 

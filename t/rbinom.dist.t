@@ -150,7 +150,11 @@ for my $c (@CASES) {
 # variate in, an IV, so size may be anything up to IV_MAX.  Expectations are
 # keyed off $Config{ivsize}, as t/seq.R.t does: 5.44.0-i686 has IV_MAX 2**31-1,
 # which an NV holds exactly; where ivsize is 8, 2**63-1 is not an NV, so the
-# largest accepted size is the double just below 2**63, 2**63-1024.  No R
+# largest accepted size is the double just below 2**63, 2**63-1024.  The
+# pointer width does not enter into it: up to 0.3416 size was held in a size_t
+# capped at (size_t)IV_MAX, which is 2**32-1 on a 32-bit -Duse64bitint perl,
+# and 85-86 below failed on three i686-linux-64int smokers (reproduced on
+# 5.44.0-i686-64int).  No R
 # reference exists for the bound itself (R falls back to qbinom() past INT_MAX);
 # the distribution checks use the same moments the cases above do.
 {
