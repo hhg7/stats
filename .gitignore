@@ -41,6 +41,10 @@
 /cover_db/
 *.gcda
 *.gcno
+# gcov's annotated sources, written into whatever directory gcov runs in: up to
+# 0.3416 a set from 2026-09-01 was tracked in the root, where cover_db/ went on
+# reading their stale XS line counts.
+*.gcov
 nytprof.out
 nytprof/
 
@@ -55,3 +59,23 @@ nytprof/
 
 # Vim swap files, left beside whatever file is open in an editor.
 .*.swp
+
+# Backups left by patch(1) and by hand-applied edits. dzil.sh already keeps
+# *.orig out of what it adds, but one already tracked shipped anyway:
+# lib/Stats/LikeR.pm.orig was in the 0.3415 and 0.3416 tarballs, because
+# [PruneFiles] keeps everything under lib/.
+*.orig
+
+# Python's bytecode cache, beside the reference scripts that write tables.
+__pycache__/
+*.pyc
+
+# The POD that md2pod.pl used to write beside README.md; it now writes the POD
+# into lib/Stats/LikeR.pm, and a copy left here only goes stale.
+/read.me.pod
+
+# Spreadsheets in the root: benchmark inputs for the author scripts
+# (xlsx.pl reads "Affinity Dataset(main).xlsx"), and what lang.compare.pl writes.
+# No test reads them, they are megabytes each, and t/ builds its .xlsx fixtures
+# at run time.
+/*.xlsx
