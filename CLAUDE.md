@@ -360,6 +360,33 @@ beside them passed. `5.44.0-i686-64int` reproduces it, failing the same two
 subtests, and was built with the iv4 recipe with only `-Uuse64bitint` changed
 to `-Duse64bitint`.
 
+### Whether an allocation fails is the machine's decision
+
+A test must not depend on the machine refusing an allocation. Whether
+`malloc()` of 16 GB returns NULL is the smoker's RAM and overcommit policy, not
+the module's behavior: a system that overcommits grants the request and kills
+the process when the pages are touched, which no guard here can turn into a
+croak. Test an out-of-memory guard only with a request larger than a process's
+address space, such as `runif(2**48)` (2\*\*48 is `SV_COUNT_MAX`, and the
+values need 2\*\*53.3 bytes), and gate anything smaller behind
+`EXTENDED_TESTING`/`AUTHOR_TESTING` with a comment saying why.
+
+A `malloc()` whose result is only compared with NULL and freed is also one a
+compiler may delete, folding the comparison to "not NULL". A probe written
+that way answers yes to any size, so write to the block through a volatile
+lvalue before freeing it, as `alloc_probe_ok()` in `LikeR.xs` does.
+
+0.3419 failed 11 of its 36 reports for both reasons, all in
+`t/alloc.guards.t`. On Linux with gcc 15.2 and 16.1, on GNU/Hurd and on
+aarch64-android with clang, the test exited with "Out of memory" in the
+`Newxz()` that followed a probe of twice its size. On NetBSD and DragonFly,
+`bw_sj(nb => 2**31 - 1)` was granted its 16 GB and the process was killed. The
+compiler deletion is the reading that fits those reports, not something
+observed: gcc 13.3 and 14.2 keep the call, and no compiler that deletes it was
+installed here. A build of 0.3419 with the probe forced to `TRUE` reproduces
+the Android report exactly, and is how to check that a new guard's test
+really exercises the probe.
+
 ### Threads change which libc function perl calls
 
 A threaded perl defines `USE_REENTRANT_API`, and `reentr.h` then redefines a

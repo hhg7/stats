@@ -1,5 +1,40 @@
 Revision history for Stats-LikeR
 
+0.342 2026-11-10 CST (Claude Fable 5.2 helped)
+
+ [Out-of-memory guards: 11 failing reports of 0.3419]
+
+ - 0.3419 failed on 11 of its 36 CPAN Testers reports, all in
+   t/alloc.guards.t and nowhere else: perl 5.24.4 and 5.44.0 on
+   x86_64 and aarch64 Linux (gcc 15.2 and 16.1), GNU/Hurd, NetBSD and
+   DragonFly, and 5.44.0 on aarch64-android (clang). The test exited
+   with "Out of memory!" or "Out of memory in
+   perl:util:safesyscalloc", or was killed, after its 15th or 16th
+   subtest. The module and the test were each at fault.
+
+ - The module: alloc_probe_ok(), which lets matrix(), runif(), rnorm(),
+   fisher_test(), mcnemar_test(), dunn_test() and the bw_*() selectors
+   croak when the memory they need is not there, asked malloc() for
+   the block and freed it untouched. A compiler may delete such a pair
+   and treat the request as granted, and the guard then never fires.
+   That is the reading that fits the Linux and Android reports, where
+   an allocation half the size of the one just "probed" was refused;
+   it was not observed directly, since gcc 13.3 and 14.2 keep the
+   call, but a build with the probe removed dies exactly as the
+   Android report does. The probe now writes one byte to the block
+   through a volatile lvalue, which a compiler has to keep.
+
+ - The test: three cases asked the machine for 16 GB, 320 GB and 22 TB
+   and assumed it would refuse. A system that overcommits grants the
+   request and kills the process when the pages are touched, which is
+   what NetBSD and DragonFly did, and where 16 GB was granted
+   bw_sj(nb => 2**31 - 1) alone ran 150 s. Those three cases now run
+   only under EXTENDED_TESTING or AUTHOR_TESTING. In their place
+   runif(2**48) and rnorm(n => 2**48) ask for more address space than
+   a process has, so the probe is exercised with the same answer on
+   every machine; against a probe that always says yes they exit with
+   "Out of memory". t/alloc.guards.t now has 23 subtests.
+
 0.3419 2026-11-10 CST (Claude Fable 5.2 helped)
 
  [lm(), glm() and the formula models]

@@ -1120,10 +1120,23 @@ It takes pTHX_ although no Linux perl needs it: under PERL_IMPLICIT_SYS, which
 every Windows perl defines, XSUB.h turns malloc() and free() into
 PerlMem_malloc() and PerlMem_free(), which reach the host allocator through
 my_perl, and without the context 0.3414 did not compile on Strawberry Perl.
-That allocator returns NULL rather than aborting, so the probe still works.*/
+That allocator returns NULL rather than aborting, so the probe still works.
+
+The block is written to, through a volatile lvalue, before it is freed.  A
+malloc() whose result is only compared with NULL and freed is one a compiler
+may delete, folding the comparison to "not NULL", and the probe then answers
+TRUE for any size.  That is the reading of the 0.3419 reports that fits them:
+t/alloc.guards.t died with "Out of memory in perl:util:safesyscalloc" under
+clang (aarch64-android) and with "Out of memory!" under gcc 15.2 and 16.1 on
+Linux, in the Newxz() that follows a probe of twice its size, while gcc 13.3
+and 14.2 here keep the call.  No compiler that deletes it is installed here,
+so the deletion itself was not observed.  A volatile store is a side effect
+the compiler has to keep, and it needs the real block to store into.*/
 static bool alloc_probe_ok(pTHX_ size_t bytes) {
+	if (bytes == 0) return TRUE;   //malloc(0) may be NULL, and has no byte to write
 	void *probe = malloc(bytes);   //not Newx(), which aborts: see above
 	if (!probe) return FALSE;
+	*(volatile unsigned char *)probe = 0;   //keeps the malloc() alive: see above
 	free(probe);
 	return TRUE;
 }
