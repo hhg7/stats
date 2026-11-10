@@ -1,6 +1,6 @@
 Revision history for Stats-LikeR
 
-0.3419 2026-11-09 CST (Claude Fable 5.2 helped)
+0.3419 2026-11-10 CST (Claude Fable 5.2 helped)
 
  [lm(), glm() and the formula models]
 
@@ -236,6 +236,41 @@ Revision history for Stats-LikeR
    time, because every '&' scanned the whole remainder for a ';'
    (4e5 '&' in one cell took 0.84 s). The search now stops at the next
    '&', in 0.007 s. What is decoded is unchanged.
+ - A .gz or .bz2 file is now read a block at a time, as documented. It
+   was not: each 64 KB block of decompressed text was left as a
+   temporary until the whole file had been parsed, so a compressed read
+   held the entire decompressed text on top of the table. A filtered
+   read that kept 20,475 of a 400 MB CSV's 7.8 million rows peaked at
+   30 MB from the plain file and at 422 MB from its .gz; a 13 MB CSV
+   keeping 300 rows peaked at 14.2 MB from its .gz and now peaks at
+   2.2 MB (17.4 MB to 5.1 MB from its .bz2). The blocks are freed as
+   each line is read. What is returned is unchanged.
+ - Cells of one column that hold the same text now share one string in
+   a CSV or TSV read, as an .xlsx's shared strings already did, so a
+   column of categories costs one buffer per value instead of one per
+   cell. A 300,000-row CSV with four category columns of six went from
+   233 MB to 197 MB as an aoh and from 140 MB to 103 MB as a hoa, and
+   about 10% faster (0.109 s to 0.092 s as a hoa). A column whose
+   cells do not repeat is noticed and left alone: a 30,000 x 50 file
+   of distinct numbers reads in the same time to within 2 ms. The
+   values are unchanged, and a write to one cell reaches no other;
+   on perls before 5.18 Internals::SvREADONLY() is true of a shared
+   cell, as it already was of an .xlsx's. Not for a read with a
+   'filter', whose rows are built as before.
+ - A field that is an integer written as perl prints one ("42", "-7",
+   "0") is now stored as that integer rather than as its text, in every
+   kind of read: delimited, .xlsx, filtered, and the values of an
+   exploded VCF. It takes 24 bytes where the text took about 72. A
+   300,000 x 6 CSV of counts read as a hoa went from 140 MB to 57 MB
+   and from 0.110 s to 0.061 s; a 300,000 x 5 CSV with one id column
+   from 106 MB to 92 MB. The cell prints as the bytes the file held, so
+   eq, hash keys, regexes, sort and write_table() see no difference.
+   What does change is anything that looks at a scalar's type: a JSON
+   encoder now writes 5 where it wrote "5". Text an integer would not
+   print back as is left alone: "007", "+5", "-0", "5.0", "1e3", " 5",
+   and a number outside perl's integer range, which is not made a
+   float. colClasses => 'character' keeps a column, or every column,
+   as text; until now 'character' and no class at all meant the same.
 
  [write_table()]
 
@@ -246,10 +281,17 @@ Revision history for Stats-LikeR
    file is opened. A croak from the data after the header (a tied cell
    whose FETCH dies) now leaves the partial file, as csv and .xlsx
    already did, where the old file was previously left untouched.
+ - An .xlsx sheet now has its top row frozen by default, so the header
+   stays in view while scrolling: xlsx_freeze_rows defaults to 1 where
+   it defaulted to 0. Pass xlsx_freeze_rows => 0 for a sheet with
+   nothing frozen. Giving xlsx_freeze_cols alone therefore freezes the
+   header row as well as those columns. This changes the bytes of every
+   workbook written without the option; what read_table() reads back
+   from it is unchanged.
 
  [Tests]
 
- - Each fix above has its own new test file, 26 in all: t/alloc.guards.t,
+ - Each fix above has its own new test file, 29 in all: t/alloc.guards.t,
    t/cor.ragged.t, t/cor_test.validation.t, t/cov.croak_leak.t,
    t/csort.int64.t, t/fisher_test.window.R.scipy.t,
    t/formula.utf8_names.t, t/group_by.tmps.t, t/lm.formula_parens.R.t,
@@ -257,6 +299,8 @@ Revision history for Stats-LikeR
    t/mcnemar_test.exact.R.t, t/options.dangling_key.t,
    t/pbinom.huge_size.R.t, t/prcomp.small_scale.R.t,
    t/predict.svyglm_quasi.R.t, t/qnorm.central.R.t,
+   t/read_table.compressed.stream.t, t/read_table.int_cells.t,
+   t/read_table.shared_cells.t,
    t/sample.threshold.t, t/sets.no_upgrade.t, t/sum.overflow.R.t,
    t/svyglm.many_strata.t, t/tied_cell.double_fetch.t,
    t/wilcox_test.exact_refusal.t, t/write_table.tex.stream.t,
@@ -264,17 +308,21 @@ Revision history for Stats-LikeR
    Expected values are frozen from R 4.6.1, from the R packages named
    in each header, or from the build before the change where a change
    is to speed alone.
- - Two expectations changed with the behavior they pinned:
-   t/lm_glm_shared.t expected I(x-1) to die, and t/cor.R.scipy.t
-   expected a ragged matrix to give NaN cells.
+ - Three expectations changed with the behavior they pinned:
+   t/lm_glm_shared.t expected I(x-1) to die, t/cor.R.scipy.t
+   expected a ragged matrix to give NaN cells, and
+   t/read_table.colClasses.t expected an integer in a column with no
+   class to be stored as text.
  - t/parse_read.t, t/read_table.colClasses.t and
    t/read_table.input_record_separator.t write their fixtures binary.
    They opened them in text mode, so on MSWin32 a quoted "line1\nline2"
    reached the file as "line1\r\nline2", and since 0.3418 read_table()
    keeps a quoted line end as the bytes the file holds. 0.3418 failed 11
-   subtests across the three on a Strawberry Perl 5.42.3 smoker for this;
-   the module itself was right. With PERLIO=:unix:crlf the installed
-   0.3418 fails the same subtests, and with this change all three pass.
+   subtests across the three on its two MSWin32 smokers for this,
+   Strawberry Perl 5.24.4 and 5.42.3, the only failures among its 120
+   reports; the module itself was right. With PERLIO=:unix:crlf the
+   installed 0.3418 fails the same subtests, and with this change all
+   three pass.
 
 0.3418 2026-11-08 CST (Claude Opus 5.5 helped)
 

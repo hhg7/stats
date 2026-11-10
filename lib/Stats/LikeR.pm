@@ -3546,8 +3546,14 @@ sub read_table {
 			: ($args{'na_strings'});
 		# _vcf_explode() in LikeR.xs; its comment says what the columns are
 		my %mode = (aoh => 0, hoa => 1, hoh => 2, aoa => 3);
+		# A sample's values have no column of their own to give a class to, so
+		# they follow the one spelling that speaks for every column:
+		# colClasses => 'character' keeps them text, and anything else stores
+		# an integer's text as its number, as the file's own columns are.
+		my $all_text = defined $args{colClasses} && !ref $args{colClasses}
+			&& $args{colClasses} eq 'character';
 		return _vcf_explode($raw, $mode{$otype}, $args{'row_names'}, $file,
-			%na ? \%na : undef);
+			%na ? \%na : undef, $all_text ? 0 : 1);
 	}
 
 	# A multi-worksheet .xlsx with no explicit 'sheet' is returned as a hash
@@ -3632,15 +3638,20 @@ sub read_table {
 # 47 bytes less for each of the 900,000 cells converted. R's spellings:
 # one class for every column, a list by position (recycled when short, as R
 # recycles it), or a hash by name, where a name that is no column is warned
-# about, in R's words, and otherwise ignored. undef (R's NA) and 'character'
-# leave a column as read. Each name is checked here, before the file is
-# opened; which field gets which class waits for the header.
-#   %cls_code: 1 = numeric (an NV), 2 = integer (an IV), 0 = as read
+# about, in R's words, and otherwise ignored. 'character' keeps a column as
+# the text the file holds. undef (R's NA), and any column with no class at
+# all, is code 3: a cell whose text is an integer exactly as perl would print
+# it ("42", "-7", not "007" or "4.0") is stored as that IV, 24 bytes where the
+# text took 72, and every other cell as its text; S_text_is_iv() in LikeR.xs
+# has the rule and what it measured. Each name is checked here, before the
+# file is opened; which field gets which class waits for the header.
+#   %cls_code: 0 = character (its text), 1 = numeric (an NV), 2 = integer (an
+#   IV), 3 = no class given
 	my %cls_code = (numeric => 1, double => 1, real => 1, integer => 2, character => 0);
 	my $cls_arg = $args{colClasses};
 	my $cls_of = sub {
 		my ($c) = @_;
-		return 0 unless defined $c;
+		return 3 unless defined $c;
 		_usage_error('read_table', "colClasses '$c' is not one read_table reads: it takes "
 		  . "'numeric' (or 'double' or 'real'), 'integer', 'character' or undef")
 			unless exists $cls_code{$c};
@@ -3877,7 +3888,7 @@ sub read_table {
 			my $r = ref $cls_arg;
 			if ($r eq 'HASH') {
 				my %by = map { _as_bytes($_) => $cls_of->( $cls_arg->{$_} ) } keys %$cls_arg;
-				@cls = map { $by{$_} // 0 } @header;
+				@cls = map { $by{$_} // 3 } @header;
 				my %have = map { $_ => 1 } @header;
 				warn "read_table: not all columns named in 'colClasses' exist\n"
 					if grep { !$have{$_} } keys %by;
@@ -3889,8 +3900,11 @@ sub read_table {
 			} else {
 				@cls = ( $cls_of->($cls_arg) ) x @header;
 			}
-			@cls = () unless grep { $_ } @cls;
+		} else {
+			@cls = (3) x @header;
 		}
+		# all 'character': nothing to convert, and the parser is told nothing
+		@cls = () unless grep { $_ } @cls;
 		# The column arrays are made once and held, so neither the fast path
 		# nor the row loop below has to fetch them out of %data (and
 		# autovivify them) once per column per row.
@@ -16422,7 +16436,7 @@ minimal example:
 </tr>
 <tr>
   <td><code>colClasses</code></td>
-  <td>R's: store the columns you name as numbers rather than text, which takes about a third of the memory. A hash by column name, a list by position, or one class for every column. See [numeric columns](#numeric-columns-colclasses)</td>
+  <td>R's: store the columns you name as numbers rather than text, which takes about a third of the memory, or as <code>character</code> to keep them text. A field that is plainly an integer is stored as one without being named. A hash by column name, a list by position, or one class for every column. See [numeric columns](#numeric-columns-colclasses)</td>
   <td><code>colClasses =&gt; { age =&gt; 'integer', bmi =&gt; 'numeric' }</code></td>
 </tr>
 </tbody>
@@ -16703,8 +16717,11 @@ which the VCF spec allows (C<./.> under C<GT:AD:DP> is C<GT> alone). C<FORMAT>
 and the unsplit sample columns are not returned. A sample with I<more>
 values than its C<FORMAT> has keys is an error.
 
-=item * B<Values are text.> C<0/1>, C<34,7> and C<73,0,1043> are returned as
-written: C<AD>, C<PL> and C<INFO> are not split further, and C<.> is not
+=item * B<Values are as written.> C<0/1>, C<34,7> and C<73,0,1043> are returned as
+text: C<AD>, C<PL> and C<INFO> are not split further. A value that is an
+integer, such as a C<DP> of C<12>, is stored as that integer, as in any
+other read (see L<numeric columns|/"numeric columns (C<colClasses>)">);
+C<< colClasses =E<gt> 'character' >> keeps every value as text. C<.> is not
 missing unless you pass C<< 'na_strings' =E<gt> '.' >>, which then applies to the
 split values as well as to whole fields.
 
@@ -16743,11 +16760,21 @@ hoh, and an exploded aoa 8.4 s, against 7.0 s for the plain one.
 
 =head3 numeric columns (C<colClasses>)
 
-Every field is read as text unless you say otherwise. On a 64-bit perl a
-short number held as text costs about 70 bytes, and held as a number about
-24. C<colClasses> takes R's
-spelling and R's meaning: name the columns that are numbers, and they are
-stored as numbers as the file is read.
+A field is read as its text, with one exception: a field that is an integer
+written the way perl prints one (C<42>, C<-7>, C<0>) is stored as that integer.
+On a 64-bit perl a short number held as text costs about 70 bytes, and held
+as a number about 24, so a column of ids or counts takes a third of the
+memory; a 300,000 x 6 CSV of counts read as a hoa went from 140 MB to 57 MB,
+and from 0.110 s to 0.061 s. Such a cell reads exactly as its text did: it
+prints as the bytes the file held, so C<eq>, hash keys, regexes, C<sort> and
+C<write_table> see no difference. Only what looks at a scalar's type does: a
+JSON encoder writes C<5> rather than C<"5">. Anything an integer would not
+print back as stays text: C<007>, C<+5>, C<-0>, C<5.0>, C<1e3>, C<5>, and a number
+too big for perl's integer.
+
+C<colClasses> says more, in R's spelling and R's meaning: name the columns
+that are numbers, and they are stored as numbers as the file is read; or name
+a column C<character> to keep it as text whatever it holds.
 
  my $d = read_table('cohort.csv', colClasses => { age => 'integer', bmi => 'numeric' });
  my $d = read_table('cohort.csv', colClasses => [ 'character', 'integer', 'numeric' ]);
@@ -16777,8 +16804,13 @@ stored as numbers as the file is read.
   <td>an optional sign and digits, a leading blank allowed and nothing after them, within perl's integer range</td>
 </tr>
 <tr>
-  <td><code>character</code>, or <code>undef</code></td>
+  <td><code>character</code></td>
   <td>the text</td>
+  <td>anything</td>
+</tr>
+<tr>
+  <td><code>undef</code>, or a column not named</td>
+  <td>the text, or the integer when the field is one as perl prints it</td>
   <td>anything (the default)</td>
 </tr>
 </tbody>
@@ -16812,7 +16844,10 @@ have digits, where R reads C<1e> as C<1>.
 =back
 
 On a 300,000-row CSV with three of its five columns declared, the table took
-74 MB instead of 116 MB, and the read 0.095 s instead of 0.086 s.
+74 MB instead of 116 MB, and the read 0.095 s instead of 0.086 s. That was
+measured against every column held as text, which is what 0.3418 and earlier
+did with an undeclared column; an integer column now gets most of that saving
+without being declared, so declaring matters chiefly for decimals.
 
 =head3 missing values (C<na_strings> / C<na_values> / C<undef_val>)
 
@@ -19518,9 +19553,10 @@ C<lc>, which is what C<Excel::Writer::XLSX> uses. The sheets are streamed one af
 another, so only the sheet being written is held in memory. Up to 65530 sheets
 fit in a ZIP archive without ZIP64.
 
-C<xlsx_freeze_rows> and C<xlsx_freeze_cols> freeze that many leading rows/columns in place (Excel's I<freeze panes>), so they stay visible while scrolling — most often used to pin the header row. They go up to 1048575 and 16383, one short of the sheet's limits:
+C<xlsx_freeze_rows> and C<xlsx_freeze_cols> freeze that many leading rows/columns in place (Excel's I<freeze panes>), so they stay visible while scrolling. The header row is frozen by default (C<< xlsx_freeze_rows =E<gt> 1 >>); pass C<0> to leave the sheet unfrozen. They go up to 1048575 and 16383, one short of the sheet's limits:
 
- write_table(\@rows, 'report.xlsx', 'xlsx_freeze_rows' => 1);                        # pin the header row
+ write_table(\@rows, 'report.xlsx');                                                # the header row is pinned
+ write_table(\@rows, 'report.xlsx', 'xlsx_freeze_rows' => 0);                        # nothing is pinned
  write_table(\@rows, 'report.xlsx', 'xlsx_freeze_rows' => 1, 'xlsx_freeze_cols' => 2); # pin header + first two columns
 
 C<tex> and C<xlsx> are mutually exclusive. Note: dates/times are written as their
@@ -19647,9 +19683,9 @@ C<read_table>.
 </tr>
 <tr>
   <td><code>xlsx_freeze_rows</code></td>
-  <td><code>0</code> (none)</td>
+  <td><code>1</code> (the header row)</td>
   <td>Excel</td>
-  <td>number of leading rows to freeze in place (freeze panes), e.g. <code>1</code> to pin the header row; at most 1048575</td>
+  <td>number of leading rows to freeze in place (freeze panes); <code>0</code> freezes none; at most 1048575</td>
 </tr>
 <tr>
   <td><code>xlsx_freeze_cols</code></td>

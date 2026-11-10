@@ -14642,6 +14642,24 @@ before each row it hands on, and they stay 0 for an .xlsx.
   row    a REFERENCE to read_table's $data_row, read once when the plan is
          picked up: the callback has already emitted the rows before this
          point, and the alignment message counts rows from 1 across both.*/
+/*What S_push_cell() remembers of one field's recent cells, so that a text the
+column has held before shares that cell's string instead of getting a buffer of
+its own.  See S_cell_shared().*/
+#define CSV_SEEN_SETS   16	//sets of remembered cells per field; a power of two, S_cell_shared() masks with it
+#define CSV_SEEN_WAYS   2	//cells per set, most recently used first
+#define CSV_SEEN_SLOTS  (CSV_SEEN_SETS * CSV_SEEN_WAYS)
+#define CSV_SEEN_HASHED 16	//bytes at each end of a text that its hash reads; a shorter text is read whole
+#define CSV_SEEN_WINDOW 256	//probes after which a field's hit rate is looked at
+#define CSV_SEEN_KEEP   16	//hits in a window below which the field is passed by: 1 in 16
+#define CSV_SEEN_REST   4096	//cells passed by before the field is probed again
+#define CLS_AUTO 3	//the colClasses code of a field with no class, see S_text_is_iv(); 0, 1 and 2 are at csv_plan's cls
+typedef struct {
+	SV    *seen[CSV_SEEN_SLOTS];	//OWNED references; NULL = nothing remembered there
+	size_t rest;	//cells of this field still to pass by unprobed; 0 = probing
+	unsigned short int probes;	//probes in the current window, below CSV_SEEN_WINDOW
+	unsigned short int hits;	//how many of those found their text remembered
+} csv_seen;
+
 typedef struct {
 	AV     *out;	//modes 0, 1 and 3
 	HV     *hout;	//mode 2
@@ -14668,13 +14686,15 @@ typedef struct {
 	size_t  nflt;	//0 = no filter, and S_fast_row() moves the cells as they are
 	SSize_t *fj;	//filter path, per field: its output column; -1 = a later field repeats its name
 	GP     *def_gp;	//filter path: *_'s GP when %_ was aliased, see S_flt_restore_defhv()
-	unsigned char *cls;	//colClasses, per field: 0 = as read, 1 = numeric, 2 = integer; NULL = none
+	unsigned char *cls;	//colClasses, per field: 0 = character, kept as its text, 1 = numeric, 2 = integer, 3 = not declared, see S_text_is_iv(); NULL = every field is 0
 	SV    **fname;	//with cls: each field's header name, borrowed from the plan's 'hdr'
 	HV     *def_hv;	//and the %_ it held then, OWNED until put back; NULL = none
 	short int mode;	// 0 = aoh, 1 = hoa, 2 = hoh, 3 = aoa
 	bool span_mid;	//that quote came after text in its field
 	bool active;	//has the callback filled the plan in yet
 	bool undef_empty;	//active and no filter: an empty field is made undef as it is cut
+	csv_seen *seen;	//per field, ncol of them, with cut_final only; NULL = cells are not shared
+	size_t n_seen;	//how many, for S_plan_free(): ncol as it was when they were made
 	bool cut_final;	//the CSV parser with undef_empty: S_push_cell() made every cell final, so S_fast_row() stores them as they are
 } csv_plan;
 
@@ -14866,8 +14886,8 @@ static void S_plan_init(pTHX_ csv_plan *restrict p, HV *restrict h){
 			for (size_t f = 0; f < p->ncol; f++) {
 				SV **c = av_fetch(ca, (SSize_t)f, 0), **n = av_fetch(ha, (SSize_t)f, 0);
 				const IV code = (c && *c) ? SvIV(*c) : -1;
-				if (code < 0 || code > 2 || !n || !*n)
-					croak("_parse_csv_file: plan 'cls' entry %" UVuf " is not 0, 1 or 2", (UV)f);
+				if (code < 0 || code > CLS_AUTO || !n || !*n)
+					croak("_parse_csv_file: plan 'cls' entry %" UVuf " is not 0, 1, 2 or 3", (UV)f);
 				p->cls[f]   = (unsigned char)code;
 				p->fname[f] = *n;
 			}
@@ -14897,6 +14917,10 @@ static void S_plan_free(pTHX_ void *v){
 			SvREFCNT_dec(p->keys[j]);	//NULL past a croak in S_plan_init()
 	SvREFCNT_dec((SV*)p->row);
 	SvREFCNT_dec(p->dup_first);
+	for (size_t f = 0; f < p->n_seen; f++)
+		for (unsigned short int k = 0; k < CSV_SEEN_SLOTS; k++)
+			SvREFCNT_dec(p->seen[f].seen[k]);
+	Safefree(p->seen);
 	Safefree(p->idx);	Safefree(p->keys);	Safefree(p->cols);	Safefree(p->na_s);
 	Safefree(p->na_len);	Safefree(p->flt);	Safefree(p->flt_fld);	Safefree(p->fj);
 	Safefree(p->cls);	Safefree(p->fname);	Safefree(p);
@@ -14914,11 +14938,89 @@ static void S_plan_report(pTHX_ const csv_plan *restrict p, HV *restrict h){
 	(void)hv_stores(h, "dup_first", newSVsv(p->dup_first));
 }
 
+/*colClasses code 3: the field's column was given no class, and a cell of it
+whose text is an integer written the one way perl writes one is stored as that
+IV instead of as its text.
+
+Such a cell is a bodyless IV, 24 bytes, where its text was a PV of 72 with the
+buffer malloc() gives it, and no malloc() or copy is made for it.  It reads the
+same either way: an IV stringifies to exactly the text it was made from, which
+is what the rule below is for, so eq, a hash key, a regex, sort and
+write_table() all see the bytes the file held.  What does change is what looks
+at the scalar's type rather than its value: a JSON encoder writes 5 and not
+"5", and Data::Dumper likewise.  colClasses => 'character' keeps a column, or
+every column, as text.
+
+The text taken: an optional '-', then digits with no leading zero, or "0"
+alone, whose value fits an IV.  Not "-0", "+5", "007", " 5", "5 ", "1e3" or
+"5.0", none of which an IV would stringify back to, and not an integer past
+IV_MAX or below IV_MIN, which stays the text it is rather than become an NV --
+so on a perl with a 32-bit IV "3000000000" is text, and a 64-bit one stores it.
+R's type.convert() and pandas' read_csv() go further and make a whole column
+numeric; this looks at one cell and changes nothing about what it says.
+
+Measured on perl 5.44.0, best of nine in a fresh process each, against the same
+build reading with colClasses => 'character'.  A 300,000 x 6 CSV of counts,
+every cell an integer: a hoa from 0.110 s and 140 MB to 0.061 s and 57 MB, an
+aoh from 0.163 s and 233 MB to 0.117 s and 151 MB.  A 300,000 x 5 CSV with one
+column of ids: a hoa from 0.089 s and 106 MB to 0.085 s and 92 MB.  A 30,000 x
+50 file of decimals, about one in fifty of them written without a point: 0.121 s
+to 0.122 s as an aoh, and 171 MB to 167 MB.
+
+That last file is why the digits are looked at without leaving the loop early.
+Its numbers have their point in a different place from one cell to the next,
+and a loop that stopped at the first byte that is no digit mispredicted its way
+out of nearly every cell: 0.129 s, 7% slower than not looking at all.  The
+arithmetic's overflow test is a division per digit, so it is made only for a
+number long enough to overflow.
+
+n is at least 1: an empty field is undef before it gets here.  *out is written
+only on TRUE.*/
+/*Digits that cannot overflow an IV, so that many are added up unchecked: 18 of
+IV_MAX's 19 when it is 9223372036854775807, 9 of its 10 when it is 2147483647.*/
+#if IVSIZE >= 8
+#  define CLS_IV_SAFE_DIGITS 18
+#else
+#  define CLS_IV_SAFE_DIGITS 9
+#endif
+PERL_STATIC_INLINE bool S_text_is_iv(const char *restrict s, STRLEN n, IV *restrict out){
+	const bool neg = s[0] == '-';
+	const STRLEN d0 = neg ? 1 : 0;	//the first digit
+	UV u = 0;
+	if (d0 == n || (s[d0] == '0' && n > 1))	//"-" alone; "-0", and any leading zero
+		return FALSE;
+	if (n > 20)	//IV_MIN is 20 bytes; nothing longer is one
+		return FALSE;
+	{
+		unsigned char other = 0;	//nonzero once a byte that is no digit has been seen
+		for (STRLEN k = d0; k < n; k++)
+			other |= (unsigned char)((unsigned char)(s[k] - '0') > 9);
+		if (other)
+			return FALSE;
+	}
+	if (n - d0 <= CLS_IV_SAFE_DIGITS) {
+		for (STRLEN k = d0; k < n; k++)
+			u = u * 10 + (UV)(s[k] - '0');
+	} else {
+		const UV lim = neg ? (UV)IV_MAX + 1 : (UV)IV_MAX;
+		for (STRLEN k = d0; k < n; k++) {
+			const unsigned short int dig = (unsigned short int)(s[k] - '0');
+			if (u > (lim - dig) / 10)
+				return FALSE;
+			u = u * 10 + dig;
+		}
+	}
+	*out = neg ? (u == (UV)IV_MAX + 1 ? IV_MIN : -(IV)u) : (IV)u;
+	return TRUE;
+}
+
 /*read_table's colClasses: a field's text as the number its column was declared
 to be.
 
 code 1 is R's "numeric" (and "double", "real"): an NV.  code 2 is "integer":
-an IV.  code 0, "character", is never asked about.  Returns the new SV, or
+an IV.  code 0, "character", is never asked about, and code 3, a field with no
+class, is S_text_is_iv()'s and is answered by S_class_value() and
+S_push_cell() without coming here.  Returns the new SV, or
 sets *bad and returns NULL when the text is not one.  A missing value never
 gets here: an empty field and an na_strings token are undef before it would.
 
@@ -15041,6 +15143,12 @@ static SV *S_class_value(pTHX_ SV *v, unsigned char code, bool *restrict bad){	/
 	const char *s;
 	if (!v || !SvOK(v))
 		return NULL;
+	if (code == CLS_AUTO) {	//never bad: anything but an integer's text stays what it is
+		IV iv;
+		if (SvROK(v) || !SvPOK(v) || SvIOK(v) || SvNOK(v) || SvCUR(v) == 0)	//a reference, a number a filter wrote back, a dualvar
+			return NULL;
+		return S_text_is_iv(SvPVX_const(v), SvCUR(v), &iv) ? newSViv(iv) : NULL;
+	}
 	if (SvROK(v)) {
 		*bad = 1;
 		return NULL;
@@ -15194,6 +15302,93 @@ is about to give this row.
 
 restrict holds: 'run' points into the line buffer or at a literal, never into
 the accumulator.*/
+/*A text cell of field f, sharing its string with an earlier cell of that field
+that held the same text.
+
+A column of categories -- a sex, a site, a chromosome, a genotype -- holds a
+few texts many times over, and each cell used to get a buffer of its own: 32
+bytes from malloc() for anything up to 24 bytes long, beside the 40 of the SV
+itself.  Here the second cell to hold a text becomes a shared hash key,
+newSVpvn_share(), and every later one takes a reference on that key with
+newSVhek(), which costs no malloc(), no copy and no hashing.  It is what
+xlsx_cell_value() already does for an .xlsx's shared strings, for the reasons
+given at xlsx_sst_entry(): it works on every perl back to 5.10, has no limit on
+how many cells share one key, and perl unshares a cell on the first write to it.
+The length is passed positive there and here, so the bytes and the flags are
+those the cell has always had.
+
+Each field remembers CSV_SEEN_SLOTS cells, in CSV_SEEN_SETS sets of two picked
+by an FNV-1a hash of the text (Fowler, Noll and Vo's, with its 32-bit offset
+basis and prime), and what is remembered is a reference, since a hoh's repeated
+row name can free the cell it replaces.  A text that is found is compared in
+full.  A set keeps its two most recently used texts, which is what makes a
+column of a few dozen values in no order share nearly all its cells: simulated
+on a random stream of each, 16 sets of two found 100% of 12 month names and of
+20 "siteN" codes and 83% of 24 chromosome names, where 32 sets of one found
+83%, 85% and 62%.  A field whose cells do not repeat -- an id, a
+measurement -- would pay for a probe per cell and get nothing, so each field's
+hits are counted over CSV_SEEN_WINDOW probes, and a field with fewer than
+CSV_SEEN_KEEP of them is passed by for the next CSV_SEEN_REST cells and then
+tried again.
+
+Measured on perl 5.44.0, best of seven in a fresh process each, on 300,000-row
+CSVs.  Six columns, four of them categories of 2, 20, 22 and 3 values:
+
+  aoh  0.163 s and 233 MB  ->  0.145 s and 197 MB
+  hoa  0.109 s and 140 MB  ->  0.092 s and 103 MB
+
+Five columns, one of them a category of 7 values: an aoh from 186 MB to 177 MB
+and a hoa from 115 MB to 106 MB, in the same time to within 5 ms.  A 30,000 x 50
+file of numbers that do not repeat, which gains nothing: 0.116 s to 0.117 s as
+an aoh and 0.086 s to 0.088 s as a hoa, where an earlier form that probed
+every cell and passed none by cost 0.130 s and 0.100 s.
+
+len is at least 1 (an empty field is an undef before this) and at most I32_MAX,
+which S_push_cell() checks, as newSVpvn_share() takes an I32.  restrict holds
+on s: it points into the line buffer or the accumulator, never into a cell.*/
+static SV *S_cell_shared(pTHX_ csv_plan *restrict p, size_t f, const char *restrict s, STRLEN len){
+	csv_seen *restrict c = &p->seen[f];
+	uint32_t h = 2166136261U;	//FNV-1a's 32-bit offset basis
+	if (len <= 2 * CSV_SEEN_HASHED) {
+		for (STRLEN k = 0; k < len; k++)
+			h = (h ^ (unsigned char)s[k]) * 16777619U;	//its 32-bit prime
+	} else {
+		for (unsigned short int k = 0; k < CSV_SEEN_HASHED; k++)
+			h = (h ^ (unsigned char)s[k]) * 16777619U;
+		for (unsigned short int k = 0; k < CSV_SEEN_HASHED; k++)
+			h = (h ^ (unsigned char)s[len - CSV_SEEN_HASHED + k]) * 16777619U;
+	}
+	SV **set = &c->seen[((h ^ (h >> 15)) & (CSV_SEEN_SETS - 1)) * CSV_SEEN_WAYS];	//not restrict: it points into *c
+	SV *v;
+	if (++c->probes == CSV_SEEN_WINDOW) {
+		if (c->hits < CSV_SEEN_KEEP)
+			c->rest = CSV_SEEN_REST;
+		c->probes = 0;
+		c->hits   = 0;
+	}
+	for (unsigned short int w = 0; w < CSV_SEEN_WAYS; w++) {
+		SV *const was = set[w];
+		if (!was || SvCUR(was) != len || memcmp(SvPVX_const(was), s, len) != 0)
+			continue;
+		c->hits++;
+		if (w) {	//most recently used first
+			set[1] = set[0];
+			set[0] = was;
+		}
+		if (SvLEN(was) == 0)	//a shared key already: its buffer is the key's, not its own
+			return newSVhek(SvSHARED_HEK_FROM_PV(SvPVX_const(was)));
+		v = newSVpvn_share(s, (I32)len, 0);	//the second cell to hold this text
+		SvREFCNT_dec(was);
+		set[0] = SvREFCNT_inc_simple_NN(v);
+		return v;
+	}
+	v = newSVpvn(s, len);
+	SvREFCNT_dec(set[1]);	//the less recently used of the two makes way
+	set[1] = set[0];
+	set[0] = SvREFCNT_inc_simple_NN(v);
+	return v;
+}
+
 static void S_push_cell(pTHX_ csv_plan *restrict p, SV *restrict field,
 	const char *restrict run, size_t n){
 	const bool built = SvCUR(field) != 0;	//the accumulator holds the field's start
@@ -15211,11 +15406,21 @@ static void S_push_cell(pTHX_ csv_plan *restrict p, SV *restrict field,
 		v = newSV(0);
 	else {
 		const size_t f = (size_t)(AvFILLp(p->row) + 1);
-		if (p->cls && f < p->ncol && p->cls[f]) {
+		const unsigned char code = (p->cls && f < p->ncol) ? p->cls[f] : 0;	//as csv_plan's cls; a field past the width is a ragged row's, about to croak
+		IV iv;
+		if (code == 1 || code == 2) {
 			bool bad = 0;
-			if (!(v = S_class_text(aTHX_ s, len, p->cls[f], &bad)))
+			if (!(v = S_class_text(aTHX_ s, len, code, &bad)))
 				S_class_croak(aTHX_ p->file, (UV)(p->row_n + 1), p->fname[f], (UV)(f + 1),
-				              p->cls[f], sv_2mortal(newSVpvn(s, len)));
+				              code, sv_2mortal(newSVpvn(s, len)));
+		} else if (code == CLS_AUTO && S_text_is_iv(s, len, &iv))
+			v = newSViv(iv);
+		else if (p->seen && f < p->n_seen && len <= (STRLEN)I32_MAX) {	//f past the width: a ragged row, about to croak
+			if (p->seen[f].rest) {
+				p->seen[f].rest--;
+				v = newSVpvn(s, len);
+			} else
+				v = S_cell_shared(aTHX_ p, f, s, len);
 		} else
 			v = newSVpvn(s, len);
 	}
@@ -15767,8 +15972,10 @@ PERL_STATIC_INLINE SV *S_vcf_take(pTHX_ SV **ary, size_t c, bool own){
 
 /*mode: 0 = aoh, 1 = hoa, 2 = hoh, 3 = aoa, as csv_plan's.  raw is consumed: each
 row is released once it has been built from.  raw is not restrict: it is
-read_table's own array, perl-managed.*/
-static SV *S_vcf_explode(pTHX_ AV *raw, short int mode, SV *rn, const char *file, HV *na){
+read_table's own array, perl-managed.  ints: a sample's value whose text is an
+integer is stored as its IV, by the rule the file's own columns were read by
+(S_text_is_iv()); FALSE under colClasses => 'character', which keeps text.*/
+static SV *S_vcf_explode(pTHX_ AV *raw, short int mode, SV *rn, const char *file, HV *na, bool ints){
 	vcf_ex *x;
 	SV **hdr, *ret;
 	AV *aout = NULL;	//modes 0 and 3
@@ -15962,8 +16169,10 @@ counts them; the count says how many there are past that.*/
 				}
 				{
 					SV **d = dst + f->pos[vi];
+					IV iv;
 					SvREFCNT_dec(*d);	//a key FORMAT repeats: the later value wins
-					*d = S_bytes_is_na(aTHX_ &x->na, k, (STRLEN)(p - k)) ? NULL
+					*d = S_bytes_is_na(aTHX_ &x->na, k, (STRLEN)(p - k)) ? NULL	//so what is left is not empty
+						: (ints && S_text_is_iv(k, (STRLEN)(p - k), &iv)) ? newSViv(iv)
 						: newSVpvn_flags(k, (STRLEN)(p - k), SvUTF8(v) ? SVf_UTF8 : 0);
 				}
 				vi++;
@@ -29087,7 +29296,7 @@ PPCODE:
 	short int xlsx_opt = -1;
 	SV *xlsx_sheet_sv = NULL; // worksheet name; NULL = "Sheet1"
 	SV *xlsx_comment = NULL; // extra comment line(s) appended after the provenance
-	IV xlsx_freeze_rows = 0; // leading rows to freeze (0 = none)
+	IV xlsx_freeze_rows = 1; // leading rows to freeze (0 = none); 1 pins the header row, which is what a sheet is scrolled under
 	IV xlsx_freeze_cols = 0; // leading columns to freeze (0 = none)
 /* Suppress the "wrote <file>" confirmation line entirely.
 	The line is deliberately unconditional and deliberately coloured (see
@@ -29506,6 +29715,7 @@ PREINIT:
 	csv_plan *plan = NULL;
 	bool in_quotes = FALSE, post_quote = FALSE, use_cb = 0;
 	bool first_line = 1;	//a byte-order mark can only be on the first line
+	bool layered = FALSE;	//fp is the caller's handle, read through a PerlIO::via layer: see the sv_gets() below
 	size_t sep_len, comment_len;
 	size_t lineno = 0;	//physical lines read so far, for the messages
 	size_t q_line = 0;	//the line the open quoted field began on
@@ -29572,6 +29782,7 @@ caller's to close.*/
 		fp = IoIFP(io);
 		if (!fp)
 			croak("_parse_csv_file: fh is not an open handle");
+		layered = TRUE;
 		ENTER;
 	} else {
 /*Binary, as the compressed path's handle is: a text-mode open is :crlf on
@@ -29617,10 +29828,29 @@ rows came back as one long header and the table as [].*/
 		size_t len;
 		PL_rs = rs_nl;
 		errno = 0;	//so that what is left in it after a NULL is that read's own
+/*A decompressing handle fills its buffer by calling the layer's FILL, a perl
+sub, and PerlIO::via leaves what that returns -- 64 KB of text -- as a mortal
+(PerlIOVia_method() in ext/PerlIO-via/via.xs, perl 5.10.1 and 5.44.0, has an
+ENTER and a LEAVE but no FREETMPS).  Nothing else on this path frees
+temporaries between rows, so every block the file inflated to was held until
+the parse ended: a read that kept 300 of a 13 MB CSV's 300,000 rows peaked at
+0.7 MB from the plain file and at 14.2 MB from its .gz, and 17.4 MB from its
+.bz2, and a 400 MB file at 30 MB against 426 MB.  They are freed here, as each
+line is read; line_sv is not one of them.  errno is taken first, since a free()
+may change it.*/
+		if (layered) {
+			ENTER;
+			SAVETMPS;
+		}
 		line = sv_gets(line_sv, fp, 0);
+		const int gets_errno = errno;
+		if (layered) {
+			FREETMPS;
+			LEAVE;
+		}
 		PL_rs = rs_user;
 		if (!line) {
-			read_errno = errno;
+			read_errno = gets_errno;
 			break;
 		}
 		lineno++;
@@ -29887,6 +30117,10 @@ practice, and never again afterwards.*/
 				if (plan_hv && hv_exists(plan_hv, "out", 3)) {
 					S_plan_init(aTHX_ plan, plan_hv);
 					plan->cut_final = plan->undef_empty;	//see S_push_cell()
+					if (plan->cut_final && plan->ncol) {	//see S_cell_shared()
+						Newxz(plan->seen, plan->ncol, csv_seen);
+						plan->n_seen = plan->ncol;
+					}
 				}
 			}
 /*A quoted field that starts at the start of its field and runs across lines is
@@ -29941,7 +30175,7 @@ cell.*/
 OUTPUT:
 	RETVAL
 
-SV* _vcf_explode(SV* raw_ref, short mode, SV* rn, const char* file, SV* na_ref = &PL_sv_undef)
+SV* _vcf_explode(SV* raw_ref, short mode, SV* rn, const char* file, SV* na_ref = &PL_sv_undef, bool ints = TRUE)
 PREINIT:
 	HV *na = NULL;
 CODE:
@@ -29957,22 +30191,23 @@ only spelling perl's default typemap has.  0 = aoh, 1 = hoa, 2 = hoh, 3 = aoa.*/
 		na = (HV*)SvRV(na_ref);
 	}
 	ENTER;	//S_vcf_explode()'s destructor runs at the LEAVE, or on a croak's unwind
-	RETVAL = S_vcf_explode(aTHX_ (AV*)SvRV(raw_ref), (short int)mode, rn, file, na);
+	RETVAL = S_vcf_explode(aTHX_ (AV*)SvRV(raw_ref), (short int)mode, rn, file, na, ints);
 	LEAVE;
 OUTPUT:
 	RETVAL
 
  # read_table's colClasses, for the rows its perl closure stores: the same
  # S_class_value() the parser uses, so the two cannot drift apart.  code is 1
- # (numeric) or 2 (integer); row, name and field are for the message.  Returns
+ # (numeric), 2 (integer) or 3 (no class: an integer's text becomes its IV, see
+ # S_text_is_iv()); row, name and field are for the message.  Returns
  # the converted value, or a copy of v when there is nothing to convert.
 SV* _cell_class(SV* v, IV code, SV* file, UV row, SV* name, UV field)
 PREINIT:
 	bool bad = 0;
 	SV *nv;
 CODE:
-	if (code < 1 || code > 2)
-		croak("_cell_class: code %" IVdf " is not 1 (numeric) or 2 (integer)", code);
+	if (code < 1 || code > CLS_AUTO)
+		croak("_cell_class: code %" IVdf " is not 1 (numeric), 2 (integer) or 3 (no class)", code);
 	SvGETMAGIC(v);
 	nv = S_class_value(aTHX_ v, (unsigned char)code, &bad);
 	if (bad)
