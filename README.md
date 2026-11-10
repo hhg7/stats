@@ -488,7 +488,11 @@ the main effects alongside the interaction (`a * b` expands to `a + b + a:b`;
     my $res_2way = anova($data_2way, 'len ~ supp * dose');
 
 Bare string columns are treated as factors; numeric columns, `I(x^2)` and
-`log(x)` enter as single regressors. A factor is coded by treatment contrasts
+`log(x)` enter as single regressors. Inside `I()`, `log()`, `exp()`, `sqrt()`,
+`log2()`, `log10()`, `log1p()` and `abs()` a term may use `+ - * / ^`, numbers
+and nested parentheses with R's precedence, so `log(x+1)`, `I(x*2)` and
+`I(x/z-1)` are each one regressor; a term that cannot be read is a fatal
+"cannot evaluate term" error. A factor is coded by treatment contrasts
 or by a full set of indicators exactly as R decides it (its "margin rule"), so
 nested and per-group-slope models come out as in R: `y ~ a + a:b` gives `a:b`
 `levels(a) * (levels(b) - 1)` degrees of freedom, and `y ~ g + g:x` fits a
@@ -4942,7 +4946,8 @@ that `lmerTest` adds to its summary.
 Random-effects terms are written as in `lme4`: `(1 | g)` a random intercept,
 `(x | g)` a correlated intercept and slope, `(0 + x | g)` a slope alone, so that
 `(1 | g) + (0 + x | g)` is the uncorrelated pair; several grouping factors,
-crossed or nested, are allowed, and `(1 | a/b)` expands to `(1 | a) + (1 | a:b)`.
+crossed or nested, are allowed, and `(1 | a/b)` expands to `(1 | a) + (1 | a:b)`
+(and `(1 | a/b/c)` to those two plus `(1 | a:b:c)`).
 The fixed part is expanded as for [`lm`](#lm).
 
 As in `lme4`, a model croaks when a grouping factor has only one level among
@@ -5061,6 +5066,7 @@ or
     max(@arr, 4, 5)
 
 max will die if any undefined values are provided. A `NaN` anywhere in the input makes the answer `NaN`, as it does in R.
+An integer answer above 2\*\*53 is returned as that integer, not rounded to a floating-point value; elements of a tied array, and tied or overloaded elements, are still answered as a floating-point value.
 See [Compared with List::Util](#compared-with-listutil) under `sum` for the other ways it differs from List::Util's `max`.
 
 ## mcnemar_test
@@ -5250,6 +5256,7 @@ or
     min(@arr, 4, 5)
 
 min will die if any undefined values are provided. A `NaN` anywhere in the input makes the answer `NaN`, as it does in R.
+An integer answer above 2\*\*53 is returned as that integer, not rounded to a floating-point value; elements of a tied array, and tied or overloaded elements, are still answered as a floating-point value.
 See [Compared with List::Util](#compared-with-listutil) under `sum` for the other ways it differs from List::Util's `min`.
 
 ## mode
@@ -5973,7 +5980,10 @@ interactions (`x:z` → product) and transforms (`I(x^2)` → power) behave
 identically to fitting. Coefficients that the fit marked aliased (stored as NaN)
 contribute nothing, just as they were excluded from the fitted values. For `glm`
 with `family => 'binomial'` and `type => 'response'`, `eta` is passed through the
-logistic function `1 / (1 + exp(-eta))`; otherwise `eta` is returned as is.
+logistic function `1 / (1 + exp(-eta))`, and for the log-link families (poisson
+and negative binomial) through `exp(eta)`; a `svyglm` fit with family
+`quasibinomial` or `quasipoisson` is answered the same way as its plain
+family. Otherwise `eta` is returned as is.
 
 A consequence worth noting: predicting on the *training* data reproduces the
 model's `fitted_values` for any model built from continuous terms, interactions,

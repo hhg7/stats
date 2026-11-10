@@ -5,13 +5,19 @@ no source::encoding;
 use warnings FATAL => 'all';
 use autodie ':default';
 use Cn::Util;
-use SimpleFlow;
+use SimpleFlow 'parallel';
 
+my @tasks;
 foreach my $svg (dir(regex => '\.svg$')) {
 	my $png = $svg;
 	$png =~ s/svg$/png/;
-	task(
+	push @tasks, {
 		cmd         => "convert $svg $png",
-		output_file => $png
-	);
+		output_file => $png,
+		overwrite   => true
+	};
 }
+parallel(
+	tasks => \@tasks,
+	jobs  => 4
+);

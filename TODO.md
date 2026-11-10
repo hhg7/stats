@@ -61,9 +61,10 @@ its test file:
   bits of a badly conditioned sum, `sum()` alone could go back to a plain
   four-lane sum.
 - **Formulas** (every function that reads one through `lm_formula_terms()`)
-  have no parentheses: `y ~ (a + b)*c` and `y ~ (a + b + c)^2` die with "0
-  degrees of freedom", as does arithmetic inside a function or `I()`, such as
-  `log(x + 1)` or `I(a - b)`. `car`'s own `vif()` example is
+  do not expand a parenthesised group of terms: `y ~ (a + b)*c` and
+  `y ~ (a + b + c)^2` die with "cannot evaluate term" (until 0.3419, with "0
+  degrees of freedom"). Arithmetic inside a function or `I()`, such as
+  `log(x + 1)` or `I(a - b)`, works since 0.3419. `car`'s own `vif()` example is
   `(income + education)*type`, which `t/vif.R.t` has to write out as its
   expansion. Term removal (`- b`) works since 0.3218.
 - **`vif()`** has only `car::vif()`'s default `type = "terms"`; `type =

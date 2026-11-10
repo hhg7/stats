@@ -3,7 +3,7 @@
 require 5.010001;
 use strict;
 package Stats::LikeR;
-our $VERSION = '0.3418';	# quoted: a bare version ending in 0, such as 0.320, is the number 0.32, which the dist would be named
+our $VERSION = '0.3419';	# quoted: a bare version ending in 0, such as 0.320, is the number 0.32, which the dist would be named
 require XSLoader;
 use warnings FATAL => 'all';
 use Exporter 'import';
@@ -7570,7 +7570,11 @@ C<a * b * c> to the full factorial C<a + b + c + a:b + a:c + b:c + a:b:c>):
  my $res_2way = anova($data_2way, 'len ~ supp * dose');
 
 Bare string columns are treated as factors; numeric columns, C<I(x^2)> and
-C<log(x)> enter as single regressors. A factor is coded by treatment contrasts
+C<log(x)> enter as single regressors. Inside C<I()>, C<log()>, C<exp()>, C<sqrt()>,
+C<log2()>, C<log10()>, C<log1p()> and C<abs()> a term may use C<+ - * / ^>, numbers
+and nested parentheses with R's precedence, so C<log(x+1)>, C<I(x*2)> and
+C<I(x/z-1)> are each one regressor; a term that cannot be read is a fatal
+"cannot evaluate term" error. A factor is coded by treatment contrasts
 or by a full set of indicators exactly as R decides it (its "margin rule"), so
 nested and per-group-slope models come out as in R: C<y ~ a + a:b> gives C<a:b>
 C<levels(a) * (levels(b) - 1)> degrees of freedom, and C<y ~ g + g:x> fits a
@@ -14141,7 +14145,8 @@ that C<lmerTest> adds to its summary.
 Random-effects terms are written as in C<lme4>: C<(1 | g)> a random intercept,
 C<(x | g)> a correlated intercept and slope, C<(0 + x | g)> a slope alone, so that
 C<(1 | g) + (0 + x | g)> is the uncorrelated pair; several grouping factors,
-crossed or nested, are allowed, and C<(1 | a/b)> expands to C<(1 | a) + (1 | a:b)>.
+crossed or nested, are allowed, and C<(1 | a/b)> expands to C<(1 | a) + (1 | a:b)>
+(and C<(1 | a/b/c)> to those two plus C<(1 | a:b:c)>).
 The fixed part is expanded as for L<C<lm>|/"lm">.
 
 As in C<lme4>, a model croaks when a grouping factor has only one level among
@@ -14293,6 +14298,7 @@ or
  max(@arr, 4, 5)
 
 max will die if any undefined values are provided. A C<NaN> anywhere in the input makes the answer C<NaN>, as it does in R.
+An integer answer above 2**53 is returned as that integer, not rounded to a floating-point value; elements of a tied array, and tied or overloaded elements, are still answered as a floating-point value.
 See L</"Compared with List::Util"> under C<sum> for the other ways it differs from List::Util's C<max>.
 
 =head2 mcnemar_test
@@ -14577,6 +14583,7 @@ or
  min(@arr, 4, 5)
 
 min will die if any undefined values are provided. A C<NaN> anywhere in the input makes the answer C<NaN>, as it does in R.
+An integer answer above 2**53 is returned as that integer, not rounded to a floating-point value; elements of a tied array, and tied or overloaded elements, are still answered as a floating-point value.
 See L</"Compared with List::Util"> under C<sum> for the other ways it differs from List::Util's C<min>.
 
 =head2 mode
@@ -15661,7 +15668,10 @@ interactions (C<x:z> → product) and transforms (C<I(x^2)> → power) behave
 identically to fitting. Coefficients that the fit marked aliased (stored as NaN)
 contribute nothing, just as they were excluded from the fitted values. For C<glm>
 with C<< family =E<gt> 'binomial' >> and C<< type =E<gt> 'response' >>, C<eta> is passed through the
-logistic function C<1 / (1 + exp(-eta))>; otherwise C<eta> is returned as is.
+logistic function C<1 / (1 + exp(-eta))>, and for the log-link families (poisson
+and negative binomial) through C<exp(eta)>; a C<svyglm> fit with family
+C<quasibinomial> or C<quasipoisson> is answered the same way as its plain
+family. Otherwise C<eta> is returned as is.
 
 A consequence worth noting: predicting on the I<training> data reproduces the
 model's C<fitted_values> for any model built from continuous terms, interactions,

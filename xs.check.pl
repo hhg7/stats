@@ -90,6 +90,8 @@ my %svpv_audited = (
 	'const char *p = SvPV(name, l);'                   => 'mg_shared(): the shared key built from it carries SvUTF8',
 	'key  = SvPV(sv, klen);'                           => 'uniq_take(): SvUTF8 is handled on the lines after it',
 	'if (sv_utf8_downgrade(scratch, TRUE)) key = SvPV(scratch, klen);' => 'just downgraded: bytes by construction',
+	'if (sv_utf8_downgrade(scratch, 1)) key = SvPV(scratch, klen);' => 'uniq_take() and set_key_put(): just downgraded, bytes by construction',
+	'key = SvPV(sv, klen);'                            => 'set_key_put(): SvUTF8 is handled on the lines after it',
 	'colname = SvPV(by, collen);'                      => 'csort(): colklen, set from SvUTF8 on the next line, is what reaches the hash',
 	'const char *os = SvPV(output, ol);'               => 'compared with ASCII option values',
 	'const char *nv = SvPV(na_sv, nl);'                => 'compared with ASCII option values',

@@ -26,7 +26,9 @@ my $n = 0;
 sub fixture {
 	my ($text, $ext) = @_;
 	my $path = File::Spec->catfile($dir, 'c' . $n++ . ($ext // '.csv'));
-	open my $fh, '>', $path or die "cannot write $path: $!";
+	# binary: on MSWin32 a text-mode open writes each "\n" as CR LF, and
+	# read_table() keeps a quoted line end as the bytes the file holds
+	open my $fh, '>:raw', $path or die "cannot write $path: $!";
 	print {$fh} $text;
 	close $fh or die "cannot write $path: $!";
 	return $path;
