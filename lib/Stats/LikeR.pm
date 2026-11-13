@@ -3,7 +3,7 @@
 require 5.010001;
 use strict;
 package Stats::LikeR;
-our $VERSION = '0.342';	# quoted: a bare version ending in 0, such as 0.320, is the number 0.32, which the dist would be named
+our $VERSION = '0.3421';	# quoted: a bare version ending in 0, such as 0.320, is the number 0.32, which the dist would be named
 require XSLoader;
 use warnings FATAL => 'all';
 use Exporter 'import';
@@ -10913,6 +10913,18 @@ parameter: C<pchisq($q, 0)> is 0 for C<< $q E<lt>= 0 >> and 1 above it, and
 C<qchisq($p, 0)> is 0, or C<Inf> at C<$p = 1>. R's own C<tests/d-p-q-r-tst-2.R>
 pins those values; up to 0.3217 both functions returned C<NaN> there. A negative
 C<df> is still C<NaN>.
+
+An invalid parameter — C<< sd E<lt> 0 >>, a non-positive C<df> in C<qt>, a negative one in
+C<qchisq> — is C<NaN>, with one exception that is R's: a probability at an end of
+its range is answered with the end of the support first. C<qnorm(0, 0, -1)> is
+C<-Inf> and C<qnorm(1, 0, -1)> is C<Inf>; C<qt(0, -1)> is C<-Inf>; C<qchisq(0, -1)>
+is C<0> and C<qchisq(1, -1)> is C<Inf>; and the same holds for a log probability
+of C<-Inf> or C<0> and for the upper tail. R's C<qnorm>, C<qt> and C<qgamma> test
+the ends before the parameter, and this module copies that order. C<qf> does not
+have the exception, because R's C<qf> tests C<df1> and C<df2> first: C<qf(0, -1, 2)>
+is C<NaN>. A C<NaN> parameter is C<NaN> everywhere. Up to 0.342 all four returned
+C<NaN> at the ends; SciPy still does (C<norm.ppf(0, 0, -1)> is C<nan>).
+C<t/distributions.q.ends.R.t> pins every combination against R.
 
 C<< df =E<gt> Inf >> (perl's C<9**9**9>, or the string C<"Inf">) is the limit R gives it:
 C<pt($q, Inf)> is C<pnorm($q)> and C<qt($p, Inf)> is C<qnorm($p)>;

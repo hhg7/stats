@@ -2821,6 +2821,18 @@ parameter: `pchisq($q, 0)` is 0 for `$q <= 0` and 1 above it, and
 pins those values; up to 0.3217 both functions returned `NaN` there. A negative
 `df` is still `NaN`.
 
+An invalid parameter — `sd < 0`, a non-positive `df` in `qt`, a negative one in
+`qchisq` — is `NaN`, with one exception that is R's: a probability at an end of
+its range is answered with the end of the support first. `qnorm(0, 0, -1)` is
+`-Inf` and `qnorm(1, 0, -1)` is `Inf`; `qt(0, -1)` is `-Inf`; `qchisq(0, -1)`
+is `0` and `qchisq(1, -1)` is `Inf`; and the same holds for a log probability
+of `-Inf` or `0` and for the upper tail. R's `qnorm`, `qt` and `qgamma` test
+the ends before the parameter, and this module copies that order. `qf` does not
+have the exception, because R's `qf` tests `df1` and `df2` first: `qf(0, -1, 2)`
+is `NaN`. A `NaN` parameter is `NaN` everywhere. Up to 0.342 all four returned
+`NaN` at the ends; SciPy still does (`norm.ppf(0, 0, -1)` is `nan`).
+`t/distributions.q.ends.R.t` pins every combination against R.
+
 `df => Inf` (perl's `9**9**9`, or the string `"Inf"`) is the limit R gives it:
 `pt($q, Inf)` is `pnorm($q)` and `qt($p, Inf)` is `qnorm($p)`;
 `pf($x, $df1, Inf)` is `pchisq($x * $df1, $df1)`, `pf($x, Inf, $df2)` the upper

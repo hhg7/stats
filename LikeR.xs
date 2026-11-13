@@ -1009,8 +1009,24 @@ the caller owns, rather than in place.  SvPV() caches the text it makes in the
 SV it is given, upgrading it to carry a string buffer: mode() on 1e6 NVs left
 the caller's array 79 MB heavier for good, and a 1e6-IV array 56 MB.  The copy
 carries the value's flags and is formatted by the same sv_2pv_flags(), so the
-key, and with it how 1, 1.0, "1" and -0 are grouped, is what it was.*/
-static void mode_take(pTHX_ HV *slot_of, AV *orig, AV *cnt, SV *sv, SV *scr, size_t *max_count){	// no restrict: perl-managed
+key, and with it how 1, 1.0, "1" and -0 are grouped, is what it was.
+
+The counts are one size_t array indexed by slot, held in the buffer of the
+mortal SV cnt_sv so that a croak frees it -- the idiom kruskal_test() uses for
+its GroupLabel array.  *cap is the room in it, in counts, and doubles when the
+slots run out; the product cannot wrap, because each slot also costs an SV and
+a hash entry, and memory for those is gone long before 2^60 of them.  Up to
+0.342 the counts were an AV of one SV per distinct value, read with SvUV() and
+written with sv_setuv() on every repeat.  Measured on perl-5.44.0 at -O2, one
+process per case, best of five, on 1e6 values: 100 distinct integers 40.6 ms
+before and 31.9 ms after, 100 distinct strings 29.7 and 22.3 ms, all distinct
+integers 420 and 407 ms; and for the all-distinct integers the call's peak RSS
+growth fell from 231 MB to 207 MB, the 24 bytes of an SV head per slot.
+
+The (size_t *) cast of SvPVX() is deliberate: the buffer is the allocator's
+own block, as newSV() and SvGROW() got it and never offset, so it is aligned
+for any object type.*/
+static void mode_take(pTHX_ HV *slot_of, AV *orig, SV *cnt_sv, size_t *restrict cap, SV *sv, SV *scr, size_t *restrict max_count){	// no restrict on the SV, AV and HV: perl-managed
 	STRLEN klen;
 	const char *key;
 	if (SvPOK(sv))
@@ -1024,13 +1040,16 @@ static void mode_take(pTHX_ HV *slot_of, AV *orig, AV *cnt, SV *sv, SV *scr, siz
 	if (!slot) croak("mode: internal hash error");
 	size_t c;
 	if (SvOK(*slot)) {
-		SV *csv = AvARRAY(cnt)[SvUV(*slot)];
-		c = (size_t)SvUV(csv) + 1;
-		sv_setuv(csv, (UV)c);
+		c = ++((size_t *)SvPVX(cnt_sv))[SvUV(*slot)];
 	} else {
-		sv_setuv(*slot, (UV)(av_len(cnt) + 1));
+		const size_t n = (size_t)(av_len(orig) + 1);	//the new slot: orig holds one element per slot
+		if (n == *cap) {
+			*cap *= 2;
+			SvGROW(cnt_sv, *cap * sizeof(size_t));
+		}
+		sv_setuv(*slot, (UV)n);
 		av_push(orig, newSVsv(sv));
-		av_push(cnt, newSVuv(1));
+		((size_t *)SvPVX(cnt_sv))[n] = 1;
 		c = 1;
 	}
 	if (c > *max_count) *max_count = c;
@@ -24171,6 +24190,14 @@ Four rules are followed throughout, and all are about the tail nobody watches:
   used to be -Inf.
 - p outside [0, 1], a non-positive df, and a NaN anywhere all return NaN
   rather than a plausible number, as R does.
+- A p of exactly 0 or 1 (a log p of -Inf or 0) is answered with the end of
+  the support before the parameter is validated, in qnorm, qt and qchisq, and
+  after it in qf. That is the order R 4.6.1 runs R_Q_P01_boundaries() and its
+  parameter check in (src/nmath/qnorm.c, qt.c, qgamma.c; qf.c has them the
+  other way round), so qnorm(0, 0, -1) is -Inf, qt(1, 0) is Inf and
+  qchisq(0, -1) is 0 where qf(0, -1, 2) is NaN. A NaN parameter is still NaN
+  everywhere. Up to 0.342 all four checked the parameter first;
+  t/distributions.q.ends.R.t pins every combination.
 
 df = Inf is the limit R gives it (src/nmath/pt.c, qt.c, pf.c, qf.c): pt is
 pnorm, pf(x, df1, Inf) is pchisq(x df1, df1), pf(x, Inf, df2) the upper
@@ -24320,9 +24347,12 @@ static NV d_qnorm(NV p, const NV *par, bool lower, bool give_log) {
 	const short int where = dist_q_tail(p, lower, give_log, &t);
 	if (where == DQ_NAN)                     return NV_NAN;
 	if (nv_isnan(mean) || nv_isnan(sd))      return NV_NAN;
-	if (sd < 0.0)                            return NV_NAN;
+	/*The ends of the support come before the sd check, which is the order of
+	R's qnorm5() (R_Q_P01_boundaries(), then sigma < 0): R's qnorm(0, 0, -1)
+	is -Inf. See the dist_spec block above.*/
 	if (where == DQ_LEFT)  return -NV_INF;
 	if (where == DQ_RIGHT) return  NV_INF;
+	if (sd < 0.0)                            return NV_NAN;
 	if (sd == 0.0) return mean;              //a step at the mean, as pnorm has
 	/*The standard normal is symmetric, so an upper-tail quantile is the
 	negated lower one.*/
@@ -24348,10 +24378,11 @@ static NV d_qt(NV p, const NV *par, bool lower, bool give_log) {
 	const NV df = par[0];
 	dist_tail t;
 	const short int where = dist_q_tail(p, lower, give_log, &t);
-	if (where == DQ_NAN)                   return NV_NAN;
-	if (nv_isnan(df) || !(df > 0.0))       return NV_NAN;
+	if (where == DQ_NAN || nv_isnan(df))   return NV_NAN;
+	//the ends before the df check, as in R's qt.c: R's qt(0, -1) is -Inf
 	if (where == DQ_LEFT)  return -NV_INF;
 	if (where == DQ_RIGHT) return  NV_INF;
+	if (!(df > 0.0))                       return NV_NAN;
 	/*qt_tail() returns the positive t with that upper tail; a small lower
 	tail is the same t negated.*/
 	NV q;
@@ -24510,11 +24541,13 @@ static NV d_qchisq(NV p, const NV *par, bool lower, bool give_log) {
 	const NV df = par[0];
 	dist_tail t;
 	const short int where = dist_q_tail(p, lower, give_log, &t);
-	if (where == DQ_NAN)                   return NV_NAN;
-	if (nv_isnan(df) || df < 0.0)          return NV_NAN;
+	if (where == DQ_NAN || nv_isnan(df))   return NV_NAN;
+	/*The ends before the df check, as in R's qgamma(), which qchisq.c calls:
+	R's qchisq(0, -1) is 0 and qchisq(1, -1) is Inf.*/
 	if (where == DQ_LEFT)  return 0.0;
 	if (where == DQ_RIGHT) return NV_INF;
-	if (df == 0.0) return 0.0;               //all the mass is at 0, as R's qchisq(0.5, 0) is
+	if (df < 0.0)                          return NV_NAN;
+	if (df == 0.0) return 0.0;              //all the mass is at 0, as R's qchisq(0.5, 0) is
 	if (nv_isinf(df)) return NV_INF;         //as R's qchisq(0.5, Inf) is
 	return qchisq_tail(&t, df);
 }
@@ -24623,6 +24656,8 @@ static NV d_qf(NV p, const NV *par, bool lower, bool give_log) {
 	const short int where = dist_q_tail(p, lower, give_log, &t);
 	if (where == DQ_NAN)                       return NV_NAN;
 	if (nv_isnan(df1) || nv_isnan(df2))        return NV_NAN;
+	/*The df check before the ends here, unlike d_qnorm(), d_qt() and
+	d_qchisq(): that is R's qf.c order too, and R's qf(0, -1, 2) is NaN.*/
 	if (!(df1 > 0.0) || !(df2 > 0.0))          return NV_NAN;
 	if (where == DQ_LEFT)  return 0.0;
 	if (where == DQ_RIGHT) return NV_INF;
@@ -34650,14 +34685,20 @@ void mode(...)
 	PROTOTYPE: @
 	PREINIT:
 	HV *slot_of;
-	AV *orig, *cnt;
+	AV *orig;
+	SV *cnt_sv;
+	/*Counts cnt_sv has room for.  64 (512 bytes) is a starting guess, not a
+	measurement: mode_take() doubles it on demand, so it only decides how many
+	reallocations a call with many distinct values makes.*/
+	size_t cnt_cap = 64;
 	size_t max_count = 0, arg_count = 0;
 	PPCODE:
 	args_get_magic(aTHX_ ax, items);	//before any SvOK() or SvROK() reads an argument
 	if (items == 0) usage_croak(aTHX_ "mode", "no values given");
 	/*slot_of: string(value) -> its slot, in first-seen order
 	orig:    slot -> the first-seen original
-	cnt:     slot -> occurrence count
+	cnt_sv:  a mortal SV whose buffer is the size_t array slot -> occurrence
+	         count; see mode_take()
 	The keys carry the value's UTF-8 flag (a negative length), as a perl hash
 	key would: by its bytes alone, "\xe9" and its UTF-8 spelling were counted
 	apart, and the two bytes "\xc3\xa9" together with "\x{e9}".
@@ -34668,7 +34709,7 @@ void mode(...)
 	where README promises (a, c).*/
 	slot_of = (HV *)sv_2mortal((SV *)newHV());
 	orig    = (AV *)sv_2mortal((SV *)newAV());
-	cnt     = (AV *)sv_2mortal((SV *)newAV());
+	cnt_sv  = sv_2mortal(newSV(cnt_cap * sizeof(size_t)));
 	SV *scr = sv_newmortal();	//mode_take()'s scratch for a number's text
 
 	for (Stack_off_t i = 0; i < items; i++) {
@@ -34683,11 +34724,11 @@ void mode(...)
 				SV *tv = av_slow_at(aTHX_ av, j);
 				if (!tv)
 					croak("mode: undefined value at array ref index %" UVuf " (argument %" UVuf ")", (UV)j, (UV)i);
-				mode_take(aTHX_ slot_of, orig, cnt, sv_fetched(aTHX_ tv), scr, &max_count);
+				mode_take(aTHX_ slot_of, orig, cnt_sv, &cnt_cap, sv_fetched(aTHX_ tv), scr, &max_count);
 				arg_count++;
 			}
 		} else if (SvOK(arg)) {
-			mode_take(aTHX_ slot_of, orig, cnt, arg, scr, &max_count);
+			mode_take(aTHX_ slot_of, orig, cnt_sv, &cnt_cap, arg, scr, &max_count);
 			arg_count++;
 		} else {
 			croak("mode: undefined value at argument index %" UVuf, (UV)i);
@@ -34698,9 +34739,11 @@ void mode(...)
 		croak("mode needs >= 1 element");
 
 	{
-		const SSize_t nslot = av_len(cnt) + 1;
+		//read only now, after the last mode_take(): SvGROW() there may move the buffer
+		const size_t *restrict cnt = (const size_t *)SvPVX(cnt_sv);
+		const SSize_t nslot = av_len(orig) + 1;
 		for (SSize_t k = 0; k < nslot; k++)
-			if ((size_t)SvUV(AvARRAY(cnt)[k]) == max_count)
+			if (cnt[k] == max_count)
 				mXPUSHs(newSVsv(AvARRAY(orig)[k]));
 	}
 

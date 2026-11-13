@@ -1,5 +1,45 @@
 Revision history for Stats-LikeR
 
+0.3421 2026-11-13 CST (Claude Fable 5.2 helped)
+
+ [qnorm(), qt(), qchisq()]
+
+ - A probability at an end of its range is now answered before the
+   distribution parameter is validated, which is the order R takes
+   them in. qnorm(0, 0, -1) is -Inf and qnorm(1, 0, -1) is Inf;
+   qt(0, -1) is -Inf and qt(1, 0) is Inf; qchisq(0, -1) is 0 and
+   qchisq(1, -1) is Inf. The same holds for a log probability of -Inf
+   or 0 and for the upper tail. Up to 0.342 every one of these was
+   NaN, because the sd or df was checked first. R's qnorm.c, qt.c and
+   qgamma.c (which qchisq calls) run R_Q_P01_boundaries() ahead of the
+   parameter check; R 4.6.1's source was read for the order, and R
+   4.6.2 run for the values.
+ - Nothing else moves. An invalid parameter with a probability inside
+   the range is still NaN, as is a NaN parameter anywhere. qf() is
+   unchanged and has no such exception: R's qf.c checks df1 and df2
+   first, so qf(0, -1, 2) is NaN there and here. SciPy validates the
+   parameters first in all of these and returns nan; this module
+   follows R.
+ - t/distributions.q.ends.R.t is new: a frozen table of 388 R results
+   crossing both tails, both scales, the two ends and an interior p
+   with invalid, degenerate and NaN parameters, each called
+   positionally, by name and through an array reference (927
+   subtests). 104 of its rows fail against 0.342.
+
+ [mode()]
+
+ - mode() is faster and lighter where values repeat. Its counts are
+   now one array of integers in place of one perl scalar per distinct
+   value. On 1e6 values holding 100 distinct integers a call went
+   from 40.6 ms to 31.9 ms, and with 100 distinct strings from
+   29.7 ms to 22.3 ms; with every value distinct the gain is 3%. With
+   1e6 distinct integers the call's peak memory growth fell from
+   231 MB to 207 MB. The results are unchanged, ties still coming back
+   in first-seen order.
+ - t/mode.scipy.t is new: the one-dimensional cases of SciPy's own
+   TestMode, and inputs on both sides of each point where the count
+   array grows, with leak checks, one of them through a croak.
+
 0.342 2026-11-10 CST (Claude Fable 5.2 helped)
 
  [Out-of-memory guards: 11 failing reports of 0.3419]
