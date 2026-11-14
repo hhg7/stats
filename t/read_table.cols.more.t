@@ -74,10 +74,12 @@ sub dies_both {
 # a workbook of several sheets
 #--------
 # Each sheet is read with the caller's keep_cols and drop_cols. A name that is
-# a column of one sheet is no column of the other, so the warning and the
-# error say which sheet they are about; up to 0.3422 both named the file alone,
-# and "not all columns named in 'drop_cols' exist in book.xlsx: 'name'" was
-# said of a workbook that has a column called name.
+# no column of one of them is an error naming that sheet. Up to 0.3422
+# drop_cols warned "not all columns named in 'drop_cols' exist in book.xlsx:
+# 'name'" of a workbook that has a column called name, and returned the other
+# sheet whole; keep_cols died for keeping no column, without the sheet. A
+# pattern may still match no column of a sheet, and 'sheet' reads one alone,
+# where an absent name is the warning it is for any single table.
 my $book = File::Spec->catfile($dir, 'two.xlsx');
 write_table({
 	people => [ [qw(NPI name n)], [101, 'bob', 5], [102, 'amy', 6] ],
@@ -95,30 +97,43 @@ write_table({
 	check_both('two sheets, a pattern that matches in one',
 		{ people => [ ['NPI'], [101], [102] ], sites => $whole{sites} }, [],
 		$book, output_type => 'aoa', drop_cols => qr/^n/);
-	# a name: dropped where it is a column, and reported, with the sheet,
-	# where it is not
-	check_both('two sheets, drop_cols by a name of one sheet',
-		{ people => [ [qw(NPI n)], [101, 5], [102, 6] ], sites => $whole{sites} },
-		[ qr/\Aread_table: not all columns named in 'drop_cols' exist in \Q$book\E \(sheet "sites"\): 'name'\n\z/ ],
+	# A name that is no column of a sheet is an error, for either option, and
+	# the error names the sheet: the same names are asked of every sheet, and a
+	# sheet read whole under a warning is not what was asked for. Nothing is
+	# warned as well.
+	my $hint = qr/read_table: pass 'sheet' to read one worksheet, or a qr\/\/ regex, which may match no column of a sheet\n\z/;
+	dies_both('two sheets, drop_cols by a name of one sheet',
+		qr/\Aread_table: not all columns named in 'drop_cols' exist in \Q$book\E \(sheet "sites"\): 'name'\n$hint/, [],
 		$book, output_type => 'aoa', drop_cols => 'name');
-	# keep_cols by a name from each sheet: each sheet reports the other's
-	my @both;
-	{
-		local $SIG{__WARN__} = sub { push @both, @_ };
-		is_deeply(read_table($book, output_type => 'aoa', keep_cols => [qw(NPI site)]),
-			{ people => [ ['NPI'], [101], [102] ], sites => [ ['site'], ['a'], ['b'] ] },
-			'two sheets, keep_cols by a name of each');
-	}
-	is_deeply([ sort @both ], [
-		"read_table: not all columns named in 'keep_cols' exist in $book (sheet \"people\"): 'site'\n",
-		"read_table: not all columns named in 'keep_cols' exist in $book (sheet \"sites\"): 'NPI'\n",
-	], 'and each sheet names the one that is not its column');
-	# keep_cols by a name of one sheet only keeps nothing of the other, which
-	# is refused: the error names the sheet, and the name was reported first
 	dies_both('two sheets, keep_cols by a name of one sheet',
-		qr/\Aread_table: 'keep_cols' keeps no column of \Q$book\E \(sheet "sites"\)\n\z/,
-		[ qr/exist in \Q$book\E \(sheet "sites"\): 'NPI'\n\z/ ],
+		qr/\Aread_table: not all columns named in 'keep_cols' exist in \Q$book\E \(sheet "sites"\): 'NPI'\n$hint/, [],
 		$book, output_type => 'aoa', keep_cols => 'NPI');
+	# a name from each sheet: the first sheet read refuses the other's
+	dies_both('two sheets, keep_cols by a name of each',
+		qr/\Aread_table: not all columns named in 'keep_cols' exist in \Q$book\E \(sheet "(?:people"\): 'site'|sites"\): 'NPI')\n$hint/, [],
+		$book, output_type => 'aoa', keep_cols => [qw(NPI site)]);
+	# both options' absent names are in the one error, keep_cols' first
+	dies_both('two sheets, absent names in both options',
+		qr/\Aread_table: not all columns named in 'keep_cols' exist in \Q$book\E \(sheet "sites"\): 'NPI'\nread_table: not all columns named in 'drop_cols' exist in \Q$book\E \(sheet "sites"\): 'name', 'n'\n$hint/, [],
+		$book, output_type => 'aoa', keep_cols => [ 'NPI', qr/./ ], drop_cols => [qw(name n)]);
+	# in every shape, and a name beside a pattern that does match is no excuse
+	for my $otype (qw(aoh hoa hoh)) {
+		dies_both("two sheets, an absent drop_cols name: $otype",
+			qr/'drop_cols' exist in \Q$book\E \(sheet "sites"\): 'name'\n$hint/, [],
+			$book, output_type => $otype, drop_cols => [ 'name', qr/^city$/ ]);
+	}
+	# a name that is a column of every sheet is fine
+	my $same = File::Spec->catfile($dir, 'same.xlsx');
+	write_table({
+		y2024 => [ [qw(id v note)], [1, 10, 'a'] ],
+		y2025 => [ [qw(id note v)], [2, 'b', 20] ],
+	}, $same, quiet => 1);
+	check_both('two sheets, names that are columns of both',
+		{ y2024 => [ [qw(id v)], [1, 10] ], y2025 => [ [qw(id v)], [2, 20] ] }, [],
+		$same, output_type => 'aoa', keep_cols => [qw(id v)]);
+	check_both('two sheets, drop_cols by a name of both',
+		{ y2024 => [ [qw(id v)], [1, 10] ], y2025 => [ [qw(id v)], [2, 20] ] }, [],
+		$same, output_type => 'aoa', drop_cols => 'note');
 	# with the sheet chosen there is one table, and no sheet to name
 	check_both("sheet => 'people'", [ ['NPI'], [101], [102] ], [],
 		$book, output_type => 'aoa', sheet => 'people', keep_cols => 'NPI');
@@ -332,13 +347,14 @@ unless ($INC{'Devel/Cover.pm'}) {
 			eval { read_table($book, output_type => $otype, keep_cols => $rx_n) }
 		} "read_table(keep_cols) on two sheets: no memory leaks, $otype";
 		no_leaks_ok {
-			local $SIG{__WARN__} = $quiet;
 			eval { read_table($book, output_type => $otype, keep_cols => \@one_each) }
-		} "read_table(keep_cols) warning on each of two sheets: no memory leaks, $otype";
+		} "read_table(keep_cols) refusing the first sheet for a name: no memory leaks, $otype";
 		no_leaks_ok {
-			local $SIG{__WARN__} = $quiet;
 			eval { read_table($book, output_type => $otype, keep_cols => 'NPI') }
-		} "read_table(keep_cols) refusing the second sheet: no memory leaks, $otype";
+		} "read_table(keep_cols) refusing the second sheet for a name: no memory leaks, $otype";
+		no_leaks_ok {
+			eval { read_table($book, output_type => $otype, drop_cols => 'name') }
+		} "read_table(drop_cols) refusing the second sheet for a name: no memory leaks, $otype";
 		no_leaks_ok {
 			local $SIG{__WARN__} = $quiet;
 			eval { read_table($abc, output_type => $otype, keep_cols => 'Name') }

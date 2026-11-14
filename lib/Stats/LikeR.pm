@@ -3927,13 +3927,25 @@ sub read_table {
 			# refused for keeping no column says which name was no column; and
 			# of a workbook read sheet by sheet, with the sheet, since the name
 			# may be a column of another one.
+			#
+			# A workbook read sheet by sheet is refused instead: the caller
+			# chose columns for every sheet at once, and a sheet without one of
+			# them would come back whole, or cut down to other columns, under
+			# a warning that is easy to miss among the sheets that were right.
+			# Both options' names are said in the one error.
+			my @absent_msg;
 			for my $k ('keep', 'drop') {
 				next unless $sel{$k};
 				my @absent = grep { !$named{$k}{$_} } @{ $sel{$k}{names} };
-				warn "read_table: not all columns named in '${k}_cols' exist in $in: "
+				push @absent_msg, "read_table: not all columns named in '${k}_cols' exist in $in: "
 				   . join(', ', map { "'" . _as_bytes($_) . "'" } @absent) . "\n"
 					if @absent;
 			}
+			if (@absent_msg && defined $args{_sheet_ix}) {
+				die join('', @absent_msg) . "read_table: pass 'sheet' to read one worksheet, "
+				  . "or a qr// regex, which may match no column of a sheet\n";
+			}
+			warn $_ for @absent_msg;
 			if (%out) {
 				@excl        = map { $out{$_} ? 1 : 0 } @header;
 				@kept_flds   = grep { !$excl[$_] } 0 .. $#header;
@@ -6727,7 +6739,7 @@ When the target is a Hash of Hashes, incoming hash keys update existing rows, an
 
  $data = { 'Jack Smith' => { age => 30 } };
 
- $n = {
+ $n = { 
      'Jack Smith' => {    # Update existing (Hash)
          dept => 'Engineering'
       },
@@ -6735,7 +6747,7 @@ When the target is a Hash of Hashes, incoming hash keys update existing rows, an
      'Invalid'    => 'Not a reference'               # Edge case safety
  };
 
- add_data($data, $n);
+ add_data($data, $n); 
 
 B<Resulting Structure:>
 
@@ -6772,11 +6784,11 @@ B<Resulting Structure:>
 
 C<add_data> now natively supports Array references at the root level. When targeting an Array, it iterates through the source array and merges data at the corresponding indices.
 
- $data = [
-     { id => 1, name => 'Alice' }
+ $data = [ 
+     { id => 1, name => 'Alice' } 
  ];
 
- $n = [
+ $n = [ 
      { role => 'Admin' },             # Updates index 0
      { id => 2, name => 'Bob' }       # Creates index 1
  ];
@@ -8730,7 +8742,7 @@ The function returns a single Hash Reference containing the following key-value 
 Passing an Array of Arrays (AoA) triggers a standard Pearson's Chi-squared test. If the input is exactly a 2x2 matrix, Yates' continuity correction is applied automatically.
 
  my $test_data = [
-     [762, 327, 468],
+     [762, 327, 468], 
      [484, 239, 477]
  ];
  my $res = chisq_test($test_data);
@@ -8805,10 +8817,10 @@ B<Output:>
 
 Flat Hash References evaluate Goodness of Fit while preserving your categorical keys in the C<expected> and C<observed> output blocks.
 
- my $data = {
-     Apples  => 10,
-     Oranges => 20,
-     Bananas => 30
+ my $data = { 
+     Apples  => 10, 
+     Oranges => 20, 
+     Bananas => 30 
  };
 
  my $res = chisq_test($data);
@@ -9511,7 +9523,7 @@ that is, C<pearson> is the default and will be used if C<$method> is not specifi
 
 Just like R, C<pearson>, C<spearman>, and C<kendall> are available
 
-If you provide an array of arrays (a matrix), C<cor> will compute the correlation matrix automatically.
+If you provide an array of arrays (a matrix), C<cor> will compute the correlation matrix automatically. 
 
  my $r  = cor(\@x, \@y, 'spearman');       # a number
  my $R  = cor(\@rows);                     # p x p matrix, AoA of rows
@@ -9546,7 +9558,7 @@ C<cor(\@x)> on a single vector returns 1, where R requires a C<y>.
 or, with C<x> and C<y> first and unnamed, C<< cor_test($x, $y, method =E<gt> 'kendall') >>.
 The two forms are the same call; before 0.3217 only the second was accepted.
 
-C<cor_test> safely handles C<undef> (or C<NA>) values seamlessly by computing over pairwise complete observations.
+C<cor_test> safely handles C<undef> (or C<NA>) values seamlessly by computing over pairwise complete observations. 
 
 For the C<spearman> and C<kendall> methods, C<cor_test> falls back to a
 large-sample normal approximation when I<n> is large or the data contain ties
@@ -13485,7 +13497,7 @@ control-function note under L<C<glm>|/"glm">.
 
 Essentially the test determines if all groups have the same median (same distribution) (an excellent review is at https://library.virginia.edu/data/articles/getting-started-with-the-kruskal-wallis-test)
 
-Performs a Kruskal-Wallis rank sum test, see
+Performs a Kruskal-Wallis rank sum test, see 
 https://www.rdocumentation.org/packages/stats/versions/3.6.2/topics/kruskal.test
 
 =head3 hash of array entry
@@ -14974,7 +14986,7 @@ a generated duplicate column name.
 =head2 power_t_test
 
  $test_data = power_t_test(
-     n    => 30,    delta     => 0.5,
+     n    => 30,    delta     => 0.5, 
      sd    => 1.0, sig_level => 0.05
  );
 
@@ -15332,10 +15344,10 @@ column are dropped listwise.
 
 =head3 Using array of arrays
 
- my $aoa = [
-     [2, 4],
-     [4, 2],
-     [6, 6]
+ my $aoa = [ 
+     [2, 4], 
+     [4, 2], 
+     [6, 6] 
  ];
 
  my $pca = prcomp($aoa);
