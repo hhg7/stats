@@ -93,6 +93,7 @@ my %svpv_audited = (
 	'if (sv_utf8_downgrade(scratch, 1)) key = SvPV(scratch, klen);' => 'uniq_take() and set_key_put(): just downgraded, bytes by construction',
 	'key = SvPV(sv, klen);'                            => 'set_key_put(): SvUTF8 is handled on the lines after it',
 	'colname = SvPV(by, collen);'                      => 'csort(): colklen, set from SvUTF8 on the next line, is what reaches the hash',
+	'const char *ors = SvPV(PL_ors_sv, l);'              => 'grid_print(): $\\ written after the table as perl holds it, as print does on a byte handle',
 	'const char *os = SvPV(output, ol);'               => 'compared with ASCII option values',
 	'const char *nv = SvPV(na_sv, nl);'                => 'compared with ASCII option values',
 	'const char *name = SvPV(sel, nl);'                => 'a sub name for get_cv(), which takes bytes: a UTF-8 name is not found, and croaks saying so',
