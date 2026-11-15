@@ -25,9 +25,10 @@ fi
 
 # [Git::GatherDir] builds the dist only from files git tracks, so a new test left
 # untracked is silently missing from the tarball. Add the shipped paths by name
-# rather than `git add *`, and exclude *.orig: PruneFiles keeps anything under
-# lib/ and t/, so a committed backup there would ship.
-git add -- lib t LikeR.xs ppport.h Changes README.md CONTRIBUTING.md SECURITY.md ':!*.orig'
+# rather than `git add *`, and exclude patch(1)'s *.orig and *.rej: PruneFiles
+# keeps anything under lib/ and t/, so a committed backup or reject there would
+# ship, as lib/Stats/LikeR.pm.rej did in 0.3422.
+git add -- lib t LikeR.xs ppport.h Changes README.md CONTRIBUTING.md SECURITY.md ':!*.orig' ':!*.rej'
 # -a also picks up modified and deleted tracked files outside those paths.
 # Commit only when something changed, rather than `git commit || true`, which
 # also swallowed a commit that failed for a real reason.
@@ -51,7 +52,7 @@ fi
 # prefix stripped first, so a Stats-LikeR-* left is a nested one: a dzil build
 # that gathered an earlier build into this one.
 BAD=$(tar tzf "$TARBALL" | sed -e "/^Stats-LikeR-$VERSION\$/d" -e "s|^Stats-LikeR-$VERSION/||" | grep -E \
-	'\.(c|o|obj|so|dll|dylib|bs|def|exp|gcda|gcno|gcov|orig|swp)$|(^|/)(blib|cover_db|\.build|Stats-LikeR-[^/]*)(/|$)|^(Makefile|Makefile\.old|MYMETA\.(json|yml)|pm_to_blib)$' \
+	'\.(c|o|obj|so|dll|dylib|bs|def|exp|gcda|gcno|gcov|orig|rej|swp)$|(^|/)(blib|cover_db|\.build|Stats-LikeR-[^/]*)(/|$)|^(Makefile|Makefile\.old|MYMETA\.(json|yml)|pm_to_blib)$' \
 	|| true)	# grep exits 1 when nothing matches, which is the good case
 if [ -n "$BAD" ]; then
 	echo "dzil.sh: $TARBALL contains files that must not ship:" >&2

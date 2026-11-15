@@ -1,5 +1,18 @@
 Revision history for Stats-LikeR
 
+0.3423 2026-11-15 CST (Claude Opus 5.5 helped)
+
+ [Distribution]
+
+ - lib/Stats/LikeR.pm.rej, a reject left by patch(1) after its hunk had
+   been applied by hand, is no longer in the tarball. It was tracked in
+   git, [PruneFiles] keeps all of lib/, and so 0.3422 shipped it, and
+   `make install` copied it into site_perl beside the module. The module
+   itself was unaffected. .gitignore now ignores *.rej, and dzil.sh
+   leaves *.rej out of what it adds and refuses a tarball that has one,
+   as it has done for *.orig since 0.3415 and 0.3416 shipped
+   lib/Stats/LikeR.pm.orig.
+
 0.3422 2026-11-13 CST (Claude Fable 5.2 helped)
 
  [view()]

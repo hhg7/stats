@@ -2,570 +2,396 @@
 
 ## Editing `Changes`
 
-Claude may edit `Changes`. The blanket prohibition that stood here was lifted
-by the maintainer on 2026-09-04. What replaces it is a shape requirement,
-because that file is now the only copy of the notes and is parsed by CPAN and
-PAUSE:
+Claude may edit `Changes`; the maintainer lifted the old prohibition on
+2026-09-04. It is now the only copy of the release notes, nothing regenerates
+it, and CPAN and PAUSE parse it, so a bad edit is a lost release note.
 
-- Add a release by prepending a section to `Changes` itself, never to
-  README.md, and never re-word a release that has already shipped.
+- Add a release by prepending a section to `Changes`, never to README.md
+  (which no longer carries the notes). Never re-word a release that has
+  shipped.
 - A version line is `<version> <date> <tz>`, as in `0.315 2026-09-04 CDT`. A
-  release with no date, or a version that does not parse, fails
-  `changes_file_ok()` in `md2pod.pl` rather than at upload time. Verify a
-  hand-edit by loading the file through `CPAN::Changes` before trusting it.
-- Entries group under `[Bracketed headings]`, wrap at the width the surrounding
-  releases use, and say what changed and why. The 0.315 and 0.314 sections are
-  the model to follow.
-- Check what has actually shipped before opening a new section. `$VERSION` in
-  `lib/Stats/LikeR.pm` is the version *in progress*, not a released one: on
-  2026-09-04 it read 0.315 while the newest built distribution was
-  `Stats-LikeR-0.314.tar.gz` and there were no git tags at all. Work done while
-  it reads 0.315 belongs under 0.315, because that is the version a dist built
-  now would carry — do not start a 0.316 section for it.
+  missing date or an unparsable version fails `changes_file_ok()` in
+  `md2pod.pl`, which only checks the file now (up to 0.315 it regenerated it
+  from README.md). After a hand-edit, load the file through `CPAN::Changes`
+  and confirm it parses.
+- Group entries under `[Bracketed headings]`, wrap at the width of the
+  surrounding releases, and say what changed and why. The 0.315 and 0.314
+  sections are the model.
+- `$VERSION` in `lib/Stats/LikeR.pm` is the version *in progress*, not a
+  released one; local tarballs and commits named after a version are not
+  proof of release either. Check what has shipped first. Work done while
+  `$VERSION` is unreleased goes under that version's section; do not open the
+  next one.
+- `release-notes.staged` is an untracked working copy of the whole file for
+  staging notes, and can be ahead of `Changes`. Compare the two before
+  assuming either is current; re-sync or delete it once its notes land.
 
-### Restoring the prohibition
+The prohibition comes back when `.claude/hooks/no-edit-changes.sh` is
+registered again as a `PreToolUse` hook in `.claude/settings.json` (emptied
+2026-09-04); while registered it blocks every write to `Changes` whatever this
+file says. It blocks `Edit`/`Write` on a basename `Changes` and any `Bash`
+command that names `Changes` and might mutate it, including false positives
+with a `>` before the name, such as
+`perl -MCPAN::Changes -e 'CPAN::Changes->load("Changes")'`.
 
-`.claude/hooks/no-edit-changes.sh` is still in the tree but is no longer
-registered: the maintainer emptied `.claude/settings.json` on 2026-09-04.
-Putting a `PreToolUse` entry for that script back is what restores the old
-rule, and it does so independently of this file — while it is registered,
-nothing Claude can write to `Changes` gets through, whatever this section says.
+## Patch leftovers never get committed
 
-Two things about that hook are worth knowing if it comes back. It blocks
-`Edit`/`Write` whose target basename is `Changes`, and any `Bash` command that
-both names `Changes` and looks like it could mutate it. Its write heuristic is
-deliberately conservative, so it also fires on read-only commands that happen
-to contain a `>` before the name: `perl -MCPAN::Changes -e
-'CPAN::Changes->load("Changes")'` is blocked as a false positive.
-
-### It is edited directly, and it is the only copy
-
-Up to 0.315 the notes were a build artefact. `md2pod.pl` rewrote them on every
-run from a `# Changes` section in README.md, so README.md was the source and the
-two held the same prose in different markup — which is also why the old rule's
-claim that the notes were "written by hand" was not true of the file itself.
-
-That half of the generator is gone. README.md no longer carries the notes, and
-`md2pod.pl` only *checks* the file now: `changes_file_ok()` parses it the way
-CPAN and PAUSE do. Three consequences worth keeping in mind:
-
-- There is no longer a second copy to fall back on, and nothing regenerates it.
-  A bad edit is a lost release note, so verify the parse.
-- Adding a release means editing the notes file, not README.md.
-- `release-notes.staged` is an untracked working copy of the whole file, used
-  to stage a release's notes before they land. It can be ahead of `Changes`, and
-  on 2026-09-04 it was: it held 0.315's notes while `Changes` still ended at
-  0.314. Compare the two before assuming either is current, and re-sync or
-  delete the staging copy once its notes have landed.
+After applying a patch by hand, delete its `.orig` and `.rej` files before
+committing. `[PruneFiles]` ships everything under `lib/` and `t/`, and
+`.gitignore` and `dzil.sh` cannot keep out a file that is already tracked:
+`lib/Stats/LikeR.pm.orig` shipped in 0.3415 and 0.3416, and
+`lib/Stats/LikeR.pm.rej` in 0.3422, where `make` installed it beside the
+module.
 
 ## C types must match the value's real domain
 
 Every variable and parameter in `LikeR.xs` gets the type that describes what
-the value can actually be, not the type that happens to be convenient. Plain
-`int` is not a default — reach for it only when the domain genuinely is
-"signed, machine-word-ish, and not one of the cases below".
+the value can actually be. Plain `int` is only for a value that is genuinely
+signed, machine-word-ish, and none of the cases below.
 
-- **Two states only (0 or 1, yes/no, present/absent)** → `bool`, assigned
-  `TRUE`/`FALSE` (perl's own, already in scope via `perl.h`; do not add
-  `<stdbool.h>`). Never `int flag = 0`.
-- **Cannot be negative** → an unsigned type, and give it the *widest*
-  practical range so it cannot overflow on real input:
-  - sizes, lengths, counts, and array indices → `size_t`
+- **Two states** → `bool`, assigned `TRUE`/`FALSE` (perl's, from `perl.h`; do
+  not add `<stdbool.h>`). Never `int flag = 0`.
+- **Cannot be negative** → unsigned, at the widest practical range:
+  - sizes, lengths, counts, array indices → `size_t`
   - a length crossing the perl string API → `STRLEN`
-  - an integer handed to or taken from perl → `UV` (and `IV` when it must be
-    signed)
-  - a fixed width that the algorithm depends on (hashes, bitsets,
-    accumulators that must not wrap at 32 bits) → `uint64_t` / `uint32_t`
+  - an integer to or from perl → `UV` (`IV` when it must be signed)
+  - a fixed width the algorithm depends on (hashes, bitsets, accumulators
+    that must not wrap at 32 bits) → `uint64_t` / `uint32_t`
   - a byte → `unsigned char`
-  Do not "save" a `size_t` by using `unsigned int` when the value tracks the
-  size of something the caller controls.
-- **A small, enumerated set of possibilities** (a mode, a kind, a strategy —
-  say up to a handful of values) → `short int`, or `unsigned short int` when
-  no sentinel is needed. Use signed `short int` when `-1` means "not yet
-  decided", which is the existing idiom (`short int exact = -1;`,
-  `short int na_mode = 0; // 0 = pairwise, 1 = omit, 2 = keep`). Always
-  comment what each value means at the declaration.
-- **A loop counter bounded by a small literal** → `unsigned short int`, as in
-  `for (unsigned short int i = 0; i < 200; i++)`. A counter bounded by a
-  runtime count is `size_t` instead.
-- **Floating point** → `NV` throughout, never bare `double`, so the module
-  keeps working on long-double and quadmath perls.
+  Never `unsigned int` for something whose size the caller controls.
+- **A small enumerated set** (mode, kind, strategy) → `short int`, or
+  `unsigned short int` when no sentinel is needed; signed when `-1` means
+  "not yet decided" (`short int exact = -1;`). Comment every value at the
+  declaration: `short int na_mode = 0; // 0 = pairwise, 1 = omit, 2 = keep`.
+- **A loop counter bounded by a small literal** → `unsigned short int`; by a
+  runtime count → `size_t`.
+- **Floating point** → `NV`, never bare `double`.
 
-Widening or narrowing must never silently change a perl-visible signature or
-conversion (`SvUV` vs `SvIV` vs `SvNV`, `%zu` vs `%" UVuf "`); fix the format
-strings and the `Sv*` calls in the same edit. Also mind the mixed-sign
-comparison warnings this can introduce — the build is expected to stay clean.
+A type change must not silently change a perl-visible signature or conversion:
+fix the `Sv*` calls (`SvUV`/`SvIV`/`SvNV`) and format strings in the same
+edit, and keep the build free of mixed-sign comparison warnings.
 
 ## Use `restrict` by default
 
-Pointer parameters and pointer locals get `restrict` unless there is a real
-reason they cannot. Apply it even when the compiler emits byte-identical
-code: it documents the non-aliasing contract for the next reader, and it is
-checked by review, not by the optimizer. `Makefile.PL` compiles with
-`-std=gnu99`, so write bare `restrict` (not `__restrict__`).
+Pointer parameters and locals get bare `restrict` (`Makefile.PL` compiles with
+`-std=gnu99`), paired with `const` when the pointee is not written:
+`const char *restrict alt`, `bool *restrict full`. Apply it even when the code
+generated is identical; it documents the non-aliasing contract for review.
 
-Pair it with `const` when the pointee is not written, which is the existing
-style: `const char *restrict alt`, `const NV *restrict lgR`,
-`bool *restrict full`.
+Leave it off, with a short comment saying why, when:
 
-Leave `restrict` off — and say why in a short comment — when:
-
-- two parameters may legitimately point at the same object or into the same
-  buffer (in-place transforms, `src == dst` fast paths, overlapping
-  slices/rows of one allocation);
-- pointers are swapped or re-pointed at each other's targets during the
-  function's lifetime;
-- the pointee can be reached by another route inside the same call — through
-  a struct field also passed separately, a recursive call, or a callback;
-- it points at perl-managed memory that the perl API may alias behind your
-  back: `SV`/`AV`/`HV` internals, a `PV` that may be COW or a shared hash
-  key, or a buffer that can be reallocated by an intervening perl call;
+- two parameters may point at the same object or into one buffer (in-place
+  transforms, `src == dst` paths, overlapping rows of one allocation);
+- pointers are swapped or re-pointed at each other's targets;
+- the pointee is reachable another way in the same call (a struct field also
+  passed separately, recursion, a callback);
+- it points at perl-managed memory the API may alias (`SV`/`AV`/`HV`
+  internals, a COW `PV` or shared hash key, a buffer an intervening perl call
+  may reallocate);
 - the pointer escapes to code you cannot audit.
 
-Do not churn existing declarations solely to add or remove `restrict`; apply
-this when writing new code or when already editing the function.
+Do not churn existing declarations just to add or remove it; apply it to new
+code and to functions already being edited.
 
 ## Loop variables live inside their loop
 
-A loop counter, and any variable a loop uses and nothing after it reads, is
-declared *in* the loop, so it is out of scope once the loop ends:
+A loop counter, and anything a loop uses that nothing after it reads, is
+declared in the loop (`for (size_t j = 0; ...)`, temporaries in the innermost
+block that uses them), so a stale or end value cannot be read by mistake.
 
-```c
-for (size_t j = 0; j < p->nout; j++) {
-	SV *v = ary[p->idx[j]];	//per-iteration: declared in the body
-	...
-}
-```
-
-not a `size_t j;` at the top of the function followed by `for (j = 0; ...)`.
-A counter that is out of scope cannot be read by mistake with its end value,
-or reused by the next loop with a stale one, and the separate declaration line
-it no longer needs is how this keeps `LikeR.xs` shorter.
-
-- Each loop declares its own counter. Two loops in a row each get a
-  `size_t j`; they do not share one declared above both.
-- The type rules above still decide the type: `size_t` for a runtime bound,
+- Each loop declares its own counter; consecutive loops do not share one.
+- The type rules still apply: `size_t` for a runtime bound,
   `unsigned short int` for a small literal one, `SSize_t` when the bound is
   `AvFILLp()`/`av_len()` and the comparison would otherwise mix signs.
-- A per-iteration temporary goes in the innermost block that uses it, not at
-  the top of the function.
-- **The exception** is a value the code reads *after* the loop -- where a scan
-  stopped (`if (k == first)` in `xlsx_xml_uncat()`), a found index, a count.
-  That one is declared before the loop, with a short comment saying it is
-  read afterwards, as any departure from a stated convention is.
-- Declarations in a `for` init clause are C99, which `Makefile.PL` already
-  requires (it probes the vendor's C99 flag), and MSVC has accepted them since
-  Visual Studio 2013; the file has used them for years
-  (`lm_is_row_name_key()`).
-- Perl code follows the same rule with `for my $i (...)`, and a `my` inside
-  the loop body rather than above it.
+- **Exception:** a value read after the loop (where a scan stopped, a found
+  index, a count, as `if (k == first)` in `xlsx_xml_uncat()`) is declared
+  before it, with a short comment saying it is read afterwards.
+- `for` init declarations are C99, which `Makefile.PL` requires and MSVC has
+  accepted since VS 2013.
+- Perl code follows the same rule: `for my $i (...)`, `my` inside the body.
 
-As with `restrict`, do not churn functions solely to move declarations; apply
-this to new code and to any function already being edited.
+Do not churn functions just to move declarations; apply this to new code and
+functions already being edited.
 
 ## Tests must come from R's and Python's own test suites
 
-If a function has an equivalent in R or in Python (SciPy, NumPy, pandas,
-statsmodels), tests for the `Stats::LikeR` version must be **taken from those
-projects' own test suites and documented examples**, not invented here.
-Invented cases only confirm that the code does what it currently does; the
-references' cases are what pin it to the behavior it is supposed to copy.
+If a function has an R or Python (SciPy, NumPy, pandas, statsmodels)
+equivalent, its tests are **taken from those projects' test suites and
+documented examples**, not invented: invented cases only confirm what the code
+currently does. Read the local copies rather than recalling them:
 
-Where to look — both suites are available locally, so read them rather than
-recalling them:
+- R 4.6.1, `/home/con/Scripts/r-source`: `tests/reg-tests-1{a,b,c,d,e}.R` and
+  `tests/reg-tests-2.R`, examples in `src/library/stats/man/*.Rd`, their output
+  in `tests/Examples/stats-Ex.Rout.save`.
+- SciPy 1.18.0,
+  `/home/con/.pyenv/versions/3.14.2/lib/python3.14/site-packages/scipy/stats/tests/`:
+  grep the whole directory, since classes move between files across releases
+  (1.18.0 moved `TestSpearmanRho`, `TestTheilslopes` and `TestSiegelslopes`
+  into `test_correlation.py`, leaving `TestPearsonr`, `TestCorrSpearmanr`,
+  `TestKendallTau` in `test_stats.py`); check `test_morestats.py`,
+  `test_rank.py`, `test_quantile.py` and `test_hypotests.py` too. `data/`
+  holds R-generated corpora reusable as Perl test data.
+- NumPy 2.5.2, same `site-packages`: `numpy/_core/tests/`,
+  `numpy/lib/tests/`, each with a `data/`.
 
-- R 4.6.1 source: `/home/con/Scripts/r-source` —
-  `tests/reg-tests-1{a,b,c,d,e}.R` and `tests/reg-tests-2.R` for regression
-  cases, `src/library/stats/man/*.Rd` for documented examples, and
-  `tests/Examples/stats-Ex.Rout.save` for those examples' pinned output.
-- SciPy 1.18.0: `/home/con/.pyenv/versions/3.14.2/lib/python3.14/site-packages/scipy/stats/tests/`
-  — most `Test<Name>` classes are in `test_stats.py` and the hypothesis-test
-  classes in `test_morestats.py`, but the split moves between releases, so grep
-  the whole directory rather than those two files: 1.18.0 pulled
-  `TestSpearmanRho`, `TestTheilslopes` and `TestSiegelslopes` out into
-  `test_correlation.py` while leaving `TestPearsonr`, `TestCorrSpearmanr` and
-  `TestKendallTau` behind in `test_stats.py`, and `test_rank.py`,
-  `test_quantile.py` and `test_hypotests.py` are each worth checking too.
-  `data/` holds R-generated reference corpora that are directly reusable as
-  Perl test data.
-- NumPy 2.5.2: same `site-packages`, tests under `numpy/_core/tests/` and
-  `numpy/lib/tests/` (each with its own `data/`).
+Check **both** R and Python before calling a function covered; coverage is
+lopsided in unexpected directions (R has one `binom.test` case in all of
+`reg-tests-*.R`; SciPy pins dozens, annotated "results from R").
 
-Check **both** before deciding a function is well covered: coverage is
-lopsided, and the thinner suite is not always the one you would guess (R has
-a single `binom.test` case in all of `reg-tests-*.R`, while SciPy pins dozens
-for the same function, themselves annotated "results from R").
+### Freeze the expected values
 
-### Freeze the expected values; never depend on R or Python at run time
+A test must pass with no R, `python3`, NumPy or SciPy installed:
 
-A generated test must pass on a machine with no R, no `python3`, no NumPy and
-no SciPy. That means:
-
-- Expected values are **hardcoded literals in the `.t` file** (or in a plain
-  Perl data table inside it), at full precision — `options(digits=17)` on the
-  R side, `repr()` on the Python side.
-- No `Rscript`, no `python3`, no `qx{}`, no `system()`, and no
-  `plan skip_all` / `SKIP` block conditioned on a reference implementation
-  being installed. A cross-validation test that skips is a test that silently
-  never runs on a CPAN smoker.
-- When a generator script is worth keeping, commit it next to the test and
-  say in a comment how to re-run it, as `t/bedroc.python.py` does for
-  `t/bedroc.python.t`. The script regenerates the frozen table; the test
-  still never calls it.
-- Record the provenance of every expected value in the file's header comment:
-  which reference, which version, which file, which test function or man
-  page, and any upstream annotation about where the number itself came from.
-  `t/binom_test.R.scipy.t` is the model to follow, including its naming
-  (`t/<fn>.R.scipy.t` for the cross-validation file, kept separate from the
-  hand-written `t/<fn>.t`).
+- Expected values are full-precision literals in the `.t` file
+  (`options(digits=17)` in R, `repr()` in Python).
+- No `Rscript`, `python3`, `qx{}` or `system()`, and no `skip_all`/`SKIP`
+  conditioned on a reference being installed; such a test never runs on a
+  smoker.
+- A generator worth keeping is committed beside the test with a comment on
+  how to re-run it (`t/bedroc.python.py` for `t/bedroc.python.t`); the test
+  never calls it.
+- The header comment records each value's provenance: reference, version,
+  file, test function or man page, and any upstream note on the number's
+  origin. Model: `t/binom_test.R.scipy.t`, including the naming
+  (`t/<fn>.R.scipy.t`, separate from the hand-written `t/<fn>.t`).
 
 ### Maximum coverage
 
-Aim to exercise every path, not one representative call:
-
-- Cross the whole argument space the references cross — every alternative /
-  tail / method / correction switch, and every combination of them, rather
-  than the default.
-- Cover the edges the references cover: n = 0 and 1, empty and single-element
-  input, all-identical values, ties, zero variance, zero cells, exact
-  boundaries, values that underflow or overflow, `NaN`/`Inf`, and every
-  `NA`-handling mode.
-- Cover the Perl-side surface too: each accepted call form (hashref, arrayref,
-  named arguments), each documented return field, every `croak` message and
-  argument-validation path, and leak checks where the sibling tests have them.
-- Choose a tolerance per quantity, and justify it in a comment against the
-  worst observed disagreement, leaving headroom for long-double and quadmath
-  builds. Do **not** widen a tolerance to make a failure go away.
+- Cross every alternative / tail / method / correction switch the references
+  cross, in combination, not just the default.
+- Cover the edges: n = 0 and 1, empty and single-element input, identical
+  values, ties, zero variance, zero cells, exact boundaries, underflow and
+  overflow, `NaN`/`Inf`, every `NA` mode.
+- Cover the Perl surface: each call form (hashref, arrayref, named
+  arguments), each documented return field, every `croak` and validation
+  path, and leak checks where sibling tests have them.
+- Choose a tolerance per quantity, justified in a comment against the worst
+  observed disagreement, with headroom for long-double and quadmath. Never
+  widen one to make a failure go away.
 - Gate genuinely slow cases behind `EXTENDED_TESTING`/`AUTHOR_TESTING`
   rather than dropping them.
 
-When the XS and a reference disagree, do not silently pick a winner and do
-not paper over it: get a third opinion from `mpmath` at `mp.dps = 60`,
-solving the *defining* equation by bisection rather than calling a library
-inverse, and record any remaining divergence explicitly in the test file so
-that changing it later is a deliberate act.
+When the XS and a reference disagree, do not silently pick a winner: get a
+third opinion from `mpmath` at `mp.dps = 60`, solving the *defining* equation
+by bisection rather than calling a library inverse, and record any remaining
+divergence in the test file so changing it later is deliberate.
 
 ## Every change must hold across the whole support matrix
 
-A modification is not finished when it works on the default perl. It has to
-hold for every installed perl, all three NV widths, Windows, and perl 5.10.
+That means every installed perl, all three NV widths, both IV widths, Windows,
+and perl 5.10.
 
-### All installed perls
+### Installed perls
 
-`./test.all.perls.pl` builds and tests against every perlbrew perl; run it (or
-at minimum the affected versions with `-p`) for anything touching `LikeR.xs`.
-The local matrix under `/home/con/perl5/perlbrew/perls/`, by `$Config{nvtype}`:
+`./test.all.perls.pl` builds and tests against every perlbrew perl (`-p` for
+a subset); run it for anything touching `LikeR.xs`. Under
+`/home/con/perl5/perlbrew/perls/`:
 
-- `perl-5.44.0` (default), `perl-5.42.3`, `perl-5.32.1`, `perl-5.10.1` —
-  `double`, NVgf `"g"`. `perl-5.42.3` is the only threaded one of the four
-  (`useithreads`). `perl-5.32.1` is there for its release, not its
-  configuration; see "A perl's own bugs show only on that perl" below.
-- `perl-5.12.5` — `long double`, NVgf `"Lg"` (archname `x86_64-linux-ld`)
-- `5.44.0-quadmath` — `__float128`, NVgf `"Qg"`
-- `5.44.0-i686` — `double`, but a 32-bit build: `ivsize=4`, so `IV_MAX` is
-  2147483647. See "The IV is not always 64 bits" below.
-- `5.44.0-i686-64int` — the same 32-bit build with `-Duse64bitint`:
-  `ivsize=8` but `ptrsize=4`, so a `size_t` is narrower than an `IV`. This is
-  CPAN's `i686-linux-64int`, and `./test.all.perls.pl` lists it as
-  `double/iv8p4`. See "A size_t is not always as wide as an IV" below.
-- `5.16.3-thr-ld` — `long double`, `useithreads`, `usemultiplicity`,
-  `USE_REENTRANT_API`, and the only threaded perl here older than 5.20. See
-  "Threads change which libc function perl calls" below for why the age
-  matters as much as the threads.
+| perl | NV | notes |
+|---|---|---|
+| `perl-5.44.0` (default), `perl-5.42.3`, `perl-5.32.1`, `perl-5.10.1` | `double`, NVgf `"g"` | 5.42.3 is threaded; 5.32.1 is there for its release's own bugs |
+| `perl-5.12.5` | `long double`, `"Lg"` | archname `x86_64-linux-ld` |
+| `5.44.0-quadmath` | `__float128`, `"Qg"` | |
+| `5.44.0-i686` | `double` | 32-bit, `ivsize=4`: `IV_MAX` 2147483647; listed as `double/iv4` |
+| `5.44.0-i686-64int` | `double` | 32-bit, `ivsize=8`, `ptrsize=4` (CPAN's `i686-linux-64int`); listed as `double/iv8p4` |
+| `5.16.3-thr-ld` | `long double` | `useithreads`, `usemultiplicity`, `USE_REENTRANT_API`; the only threaded perl older than 5.20 |
 
-All three NV widths can be compile-checked without reconfiguring the tree
-(which would clobber the current `Makefile`) by generating the `.c` and
-compiling it against each perl's `CORE` directly. Do that as the fast check;
-it is not a substitute for actually running the suite.
+As a fast check, compile-check all three NV widths without reconfiguring the
+tree (which would clobber the `Makefile`) by generating the `.c` and compiling
+it against each perl's `CORE`. It does not replace running the suite.
 
 ### A perl's own bugs show only on that perl
 
-Varying the NV width, the IV width and threading catches bugs in this module.
-It cannot catch a bug in a perl release's own internals, which shows only on
-that release, and until 0.3215 the matrix jumped from 5.16.3 to 5.42.3.
-0.3214 failed 14 leak subtests on a 5.32.1 smoker: 5.32's regcomp leaks the
-`\s` and `\w` inversion lists of every pattern it compiles at run time, and
-`_xml_attr()` and `_xml_start_tags()` interpolated a name into their pattern,
-so they recompiled on every call. Every other perl here frees those lists.
-Installing `perl-5.32.1` reproduced all 14, by test number, and each pattern is
-now compiled once per name and kept.
+Varying widths and threading cannot catch a bug in one release's internals.
+0.3214 failed 14 leak subtests on 5.32.1 only, because 5.32's regcomp leaks
+the `\s`/`\w` inversion lists of every pattern compiled at run time, and
+`_xml_attr()`/`_xml_start_tags()` interpolated a name into their patterns.
 
-Two consequences:
-
-- In a function a leak test covers, do not interpolate a variable into a
-  match that runs more than once per name. Compile it once into a `qr//`
-  kept in a lexical cache, and evaluate that `qr//` only on a cache miss, so
-  the 5.10.0 `pp_qr()` leak below stays out of the warmed check as well.
-- `./test.all.perls.pl` (with `--list`, and after a full run) names every
-  stable series from 5.10 to the newest installed perl that has no perl in
-  the matrix. When a smoker fails on one of those series, install that
-  series' last release under perlbrew, run `--deps` once, and reproduce
-  there before changing anything.
+- In a function a leak test covers, never interpolate into a match that runs
+  more than once per name. Compile it once into a `qr//` in a lexical cache,
+  evaluated only on a cache miss (which also keeps the 5.10.0 `pp_qr()` leak
+  below out of the warmed check).
+- `./test.all.perls.pl --list` (and a full run) names every stable series
+  from 5.10 on with no perl in the matrix. When a smoker fails on one,
+  install that series' last release under perlbrew, run `--deps` once, and
+  reproduce there before changing anything.
 
 ### The IV is not always 64 bits
 
-`IV` is the width the *perl* was configured for, not the width of an `NV`. A
-build with `use64bitint=undef` — every 32-bit smoker, the armv6l ones
-included — has `IV_MAX` at 2147483647. The two are independent: a value can
-be exactly representable as an `NV` and still be far outside `IV` range.
-Every perl in that list but `5.44.0-i686` has `ivsize=8`, and until 0.315
-there was no such row at all, so the matrix varied the NV width and nothing
-else.
+With `use64bitint=undef` (every 32-bit smoker, armv6l included) `IV_MAX` is
+2147483647, independently of the NV: a value exact as an `NV` can be far
+outside `IV` range. So:
 
-Any cast from `NV` to `IV`/`UV` must therefore be gated on `IV_MAX`/`UV_MAX`
-as well as on 2\*\*53, and any `IV` arithmetic on values the caller supplies
-must be shown not to overflow at 32 bits. 0.314 gated `seq()`'s integer fast
-path on 2\*\*53 alone; `(IV)1e15` saturated and `seq(1e15, 1e15+200, 2)` came
-back as 2147483647 on the armv6l CPAN smokers, which nothing here could
-reproduce. `t/seq.R.t` now covers both branches that reach that path, keying
-the expected SV body off `$Config{ivsize}`.
+- Gate every `NV` → `IV`/`UV` cast on `IV_MAX`/`UV_MAX` as well as on 2\*\*53.
+- Show that `IV` arithmetic on caller-supplied values cannot overflow at 32
+  bits.
 
-`5.44.0-i686` is that perl, and it is in the matrix: a 32-bit build
-(`ivsize=4`, `ptrsize=4`, `IV_MAX` 2147483647, `double` NV), listed by
-`./test.all.perls.pl` as `double/iv4`. It is not decoration — restoring
-0.314's gate and building against it fails 30 subtests of `t/seq.R.t`.
+0.314 gated `seq()`'s integer path on 2\*\*53 alone, and `seq(1e15, 1e15+200,
+2)` returned 2147483647 on armv6l. `t/seq.R.t` covers both branches, keying
+expectations off `$Config{ivsize}`, and fails 30 subtests on `5.44.0-i686`
+with the old gate.
 
-One cannot be had by configuring one: Configure takes `ivsize` from
-`longsize` unless `-Duse64bitint`, and then refuses outright if
-`ivsize < ptrsize`, so on x86-64 it has to be a genuinely 32-bit build. The
-exact recipe is in the note `./test.all.perls.pl` prints whenever the matrix
-has no such perl. Two traps are worth knowing before rebuilding it:
+Such a perl cannot be configured on x86-64 (Configure takes `ivsize` from
+`longsize` and refuses `ivsize < ptrsize`); it must be a real 32-bit build,
+whose recipe `./test.all.perls.pl` prints when the matrix lacks one. Two
+traps when rebuilding:
 
-- `hints/linux.sh` hardcodes `/usr/bin/gcc` for its `-print-search-dirs`
-  probe, and `-m32` lives in `$cc` rather than `$ccflags`, so the probe
-  returns the *x86-64* library directories. `-Dlibpth` cannot correct this —
-  Configure's `ccname=gcc` branch re-appends `$plibpth` and `$glibpth` onto
-  whatever it is given — so `-Dplibpth` is the override, which that hints
-  file documents as its escape hatch.
-- `gcc-multilib` supplies 32-bit glibc (as `/usr/lib32`) and nothing more. Of
-  everything in `libswanted`, only `crypt` is then missing; perl treats it as
-  optional, so `-Dlibswanted='pthread dl m util c'` avoids needing
-  `libcrypt-dev:i386`. The only casualty is the `crypt()` builtin, which this
-  module never calls.
+- `hints/linux.sh` probes `-print-search-dirs` with a hardcoded
+  `/usr/bin/gcc`, and `-m32` lives in `$cc`, so the probe returns x86-64
+  library dirs. `-Dlibpth` cannot fix it (Configure re-appends `$plibpth` and
+  `$glibpth`); `-Dplibpth` is the override that hints file documents.
+- `gcc-multilib` supplies 32-bit glibc (`/usr/lib32`) and nothing more; of
+  `libswanted` only `crypt` is then missing, so
+  `-Dlibswanted='pthread dl m util c'` avoids `libcrypt-dev:i386`, costing
+  only the `crypt()` builtin, which this module never calls.
 
 ### A size_t is not always as wide as an IV
 
-The IV width and the pointer width are separate axes. A 32-bit perl built with
-`-Duse64bitint` has an 8-byte `IV` and a 4-byte `size_t`, so an integer the
-caller hands in can be in range for `IV` and still truncate at 2\*\*32 the
-moment it is stored in a `size_t`. `size_t` is right for element counts,
-which a 32-bit address space bounds anyway. It is wrong for a quantity that
-is not a count of things in memory, such as `rbinom()`'s `size` (a trial
-count): that is a `UV`/`IV`.
-
-0.3414 failed `t/rbinom.dist.t` 85–86 on three `i686-linux-64int` smokers for
-exactly this. `rbinom()` capped `size` with `(size_t)IV_MAX`, which on that
-build is 2\*\*32−1, and refused `size => 1e15`. The plain `i686-linux` perls
-beside them passed. `5.44.0-i686-64int` reproduces it, failing the same two
-subtests, and was built with the iv4 recipe with only `-Uuse64bitint` changed
-to `-Duse64bitint`.
+On a 32-bit `-Duse64bitint` perl the `IV` is 8 bytes and `size_t` 4, so a
+caller's integer can fit an `IV` and truncate at 2\*\*32 in a `size_t`.
+`size_t` is right for counts of things in memory; a quantity that is not one,
+such as `rbinom()`'s `size` (a trial count), is a `UV`/`IV`. 0.3414 capped it
+with `(size_t)IV_MAX`, refused `size => 1e15`, and failed `t/rbinom.dist.t`
+85–86 on `i686-linux-64int`; `5.44.0-i686-64int` reproduces it (built with the
+iv4 recipe, `-Duse64bitint` instead of `-Uuse64bitint`).
 
 ### Whether an allocation fails is the machine's decision
 
-A test must not depend on the machine refusing an allocation. Whether
-`malloc()` of 16 GB returns NULL is the smoker's RAM and overcommit policy, not
-the module's behavior: a system that overcommits grants the request and kills
-the process when the pages are touched, which no guard here can turn into a
-croak. Test an out-of-memory guard only with a request larger than a process's
-address space, such as `runif(2**48)` (2\*\*48 is `SV_COUNT_MAX`, and the
-values need 2\*\*53.3 bytes), and gate anything smaller behind
-`EXTENDED_TESTING`/`AUTHOR_TESTING` with a comment saying why.
+- No test may depend on the machine refusing an allocation: an overcommitting
+  system grants it and kills the process on first touch. Test an
+  out-of-memory guard only with a request larger than the address space,
+  such as `runif(2**48)` (2\*\*48 is `SV_COUNT_MAX`; the values need 2\*\*53.3
+  bytes), and gate anything smaller behind `EXTENDED_TESTING`/`AUTHOR_TESTING`
+  with a comment saying why.
+- A `malloc()` only compared with NULL and freed may be deleted by the
+  compiler, so the probe answers yes to any size. Write to the block through
+  a volatile lvalue before freeing it, as `alloc_probe_ok()` does.
 
-A `malloc()` whose result is only compared with NULL and freed is also one a
-compiler may delete, folding the comparison to "not NULL". A probe written
-that way answers yes to any size, so write to the block through a volatile
-lvalue before freeing it, as `alloc_probe_ok()` in `LikeR.xs` does.
-
-0.3419 failed 11 of its 36 reports for both reasons, all in
-`t/alloc.guards.t`. On Linux with gcc 15.2 and 16.1, on GNU/Hurd and on
-aarch64-android with clang, the test exited with "Out of memory" in the
-`Newxz()` that followed a probe of twice its size. On NetBSD and DragonFly,
-`bw_sj(nb => 2**31 - 1)` was granted its 16 GB and the process was killed. The
-compiler deletion is the reading that fits those reports, not something
-observed: gcc 13.3 and 14.2 keep the call, and no compiler that deletes it was
-installed here. A build of 0.3419 with the probe forced to `TRUE` reproduces
-the Android report exactly, and is how to check that a new guard's test
-really exercises the probe.
+0.3419 failed 11 of 36 reports in `t/alloc.guards.t` for both reasons ("Out of
+memory" after a probe on gcc 15.2/16.1, Hurd and Android clang; a granted
+16 GB `bw_sj(nb => 2**31 - 1)` killed on NetBSD and DragonFly). The compiler
+deletion fits the reports but was not observed locally. Forcing the probe to
+`TRUE` in a 0.3419 build reproduces the Android report, and is how to check
+that a new guard's test really exercises the probe.
 
 ### Threads change which libc function perl calls
 
-A threaded perl defines `USE_REENTRANT_API`, and `reentr.h` then redefines a
-long list of libc interfaces (`drand48`, `random`, `strerror`, `readdir`,
-`localtime`, `setlocale`, the `getpw*`/`getgr*` family, …) in terms of their
-`_r` forms over `PL_reentrant_buffer`. **That rewrite is wrapped in
-`#if PERL_REENTR_API == 1`, which `reentr.h` sets for `PERL_CORE` and
-`PERL_EXT` and for nothing else**, so perl's own source gets the `_r` form of
-a function and `LikeR.xs` gets the plain one. `perlxs` documents this under
-"Thread-aware system interfaces" and warns that mixing the two forms of one
-interface is not well defined.
-
-Never call a libc function from `LikeR.xs` that appears in `reentr.h`'s list
-without checking what perl's core does with it first. 0.316 shipped with
-`Drand01()` — libc `drand48()` on any perl before 5.20 — reading libc's
-process-global state while `pp_srand()` seeded the interpreter's buffer, so
-`srand($seed)` governed nothing the module drew. It took a 5.18.3 smoker to
-find it: the matrix's one threaded perl, `perl-5.42.3`, is new enough that
-`Perl_drand48()` has replaced the libc call and `reentr.h` no longer wraps
-`drand48` at all, so it cannot show this. The block below
-`AUTO_SEED_PRNG()` in `LikeR.xs` is the fix and records the whole of it;
-`t/srand.stream.t` is the regression test, and `5.16.3-thr-ld` the perl it
-fails on without the fix.
+Under `USE_REENTRANT_API`, `reentr.h` maps many libc interfaces (`drand48`,
+`random`, `strerror`, `readdir`, `localtime`, `setlocale`, `getpw*`/`getgr*`,
+…) onto their `_r` forms over `PL_reentrant_buffer` — but only under
+`PERL_REENTR_API == 1`, i.e. for `PERL_CORE`/`PERL_EXT`, so perl's core gets
+the `_r` form and `LikeR.xs` the plain one (`perlxs`, "Thread-aware system
+interfaces", warns against mixing them). Never call a libc function on
+`reentr.h`'s list from `LikeR.xs` without first checking what perl's core does
+with it. 0.316's `Drand01()` (libc `drand48()` before 5.20) ignored
+`srand($seed)` on threaded perls; the block below `AUTO_SEED_PRNG()` in
+`LikeR.xs` is the fix, `t/srand.stream.t` the regression test, and
+`5.16.3-thr-ld` the perl that fails without it (`perl-5.42.3` is too new to
+show it).
 
 ### Long double and quadmath
 
-- Floating point is `NV`, never bare `double`; use `NV_INF`, `NV_NAN`,
-  `NV_EPSILON`, `NV_MAX` for the constants.
-- **Never call libm bare.** `sqrt(x)`, `log(x)`, `lgamma(x)` and friends take a
-  `double`, so on a long-double or `__float128` build they silently round the
-  `NV` down to 53 bits, compute there, and convert back — no warning, no build
-  failure, just a less accurate answer than the perl running it. Every
-  NV-valued call goes through the `nv_*` macros defined below the includes in
-  `LikeR.xs` (`nv_sqrt`, `nv_log`, `nv_lgamma`, …), which paste on the `l` or
-  `q` suffix for the build's width. Adding a new libm function means adding it
-  to that block *and* to the link probe in `Makefile.PL`, not calling it
-  directly.
-- Float classification goes through `nv_isnan`/`nv_isinf`/`nv_isfinite`,
-  defined next to the `nv_*` libm block, and through nothing else. Not the bare
-  C99 macros: where a platform does not provide the type-generic versions,
-  `isfinite()` is a plain `double` function and a large-but-finite `NV`
-  narrowed into it is reported as infinite. And **not** perl's
-  `Perl_isnan`/`Perl_isinf`/`Perl_isfinite`, which is what `LikeR.xs` used up
-  to 0.298: on every perl before 5.22 they can route through a
-  `Perl_fp_class()` block in `perl.h` that has never compiled — the macro is
-  spelled with an empty parameter list and compares against `FP_CLASS_*` names
-  no `<ieeefp.h>` defines. Configure only reaches that block where it does not
-  find `isinf()`, so it is dead code on Linux and glibc and live on
-  illumos/Solaris, which is exactly how it reached CPAN in 0.298. Those perls
-  also define `Perl_isinf(x)` as `((x)==NV_INF)`, missing `-Inf`.
-- Format NVs with perl's `my_snprintf`/`my_sprintf` and `NVgf`/`NVff`, never
-  the plain C-library `snprintf` with a hand-written `%g`. `%Qg` happens to
-  work with glibc's `snprintf` only because libquadmath registers the `Q`
-  specifier at load time — a glibc extension that does not exist elsewhere.
-- Do not assume a literal or a constant is exactly representable, and do not
-  hardcode a `double`-sized epsilon; scale tolerances off `NV_EPSILON`.
-- Test tolerances need headroom for the wider widths, and any case whose cost
-  scales with NV width (long-double or `__float128` libm in an inner loop) is
-  a candidate for an `EXTENDED_TESTING` gate rather than a slow smoker.
+- Floating point is `NV`, with `NV_INF`, `NV_NAN`, `NV_EPSILON`, `NV_MAX`.
+- **Never call libm bare**: `sqrt()`, `log()`, `lgamma()` and the rest take a
+  `double` and silently round a wider `NV`. Use the `nv_*` macros below the
+  includes in `LikeR.xs`, which add the `l`/`q` suffix. A new libm function
+  goes into that block *and* the link probe in `Makefile.PL`.
+- Classify floats only with `nv_isnan`/`nv_isinf`/`nv_isfinite`. Not the bare
+  C99 macros (where not type-generic, `isfinite()` takes a `double` and calls
+  a large finite `NV` infinite), and not `Perl_isnan`/`Perl_isinf`/
+  `Perl_isfinite`: before 5.22 they can route through a `Perl_fp_class()`
+  block in `perl.h` that has never compiled, live where `isinf()` is not
+  found (illumos/Solaris, which is how 0.298 broke), and `Perl_isinf(x)` is
+  `((x)==NV_INF)`, missing `-Inf`.
+- Format NVs with `my_snprintf`/`my_sprintf` and `NVgf`/`NVff`, never libc
+  `snprintf` with a hand-written `%g`; `%Qg` works in glibc only through a
+  libquadmath extension.
+- Assume no literal is exactly representable; scale tolerances off
+  `NV_EPSILON`, never a hardcoded `double` epsilon.
+- Give test tolerances headroom for wider NVs, and consider an
+  `EXTENDED_TESTING` gate for cases whose cost scales with NV width.
 
 ### Windows, Solaris and every BSD
 
-There is no local Windows, Solaris, illumos, FreeBSD, OpenBSD, NetBSD or
-DragonFly perl, so all of this is discipline applied while writing, not
-something a test run here will catch. The module is expected to build and pass
-on all of them.
+None of these is available locally, so this is discipline while writing; the
+module must still build and pass on all of them.
 
-Common to all of these targets:
+- Allocate with `Newx`/`Newxz`/`Renew`/`Safefree`, not `malloc`/`free`.
+- Prefer the perl API to libc wherever it has an equivalent (`my_snprintf`,
+  `sortsv`, `strEQ`/`foldEQ`, `PerlIO`, `PerlProc_*`).
+- No GNU extensions: VLAs, nested functions, statement expressions,
+  `typeof`, `__builtin_*` without a fallback, zero-length arrays, case
+  ranges, `void *` arithmetic. `LikeR.xs` must compile under strict
+  `-std=c99` (not `gnu99`), the local proxy for a vendor compiler.
+- Keep the `#if !defined(__cplusplus) && !defined(restrict)` block below the
+  includes, which maps or removes `restrict` for compilers that lack it; add
+  the same guard to any other translation unit that uses `restrict`.
+- The C99 flag is probed per vendor, not guessed (`$Config{cc}` is plain `cc`
+  on Solaris and HP-UX): `-std=gnu99`/`-std=c99`, `-xc99=all`,
+  `-qlanglvl=extc99`, `-AC99`, nothing for MSVC. That logic lives in
+  `dist.ini`'s `[MakeMaker::Awesome]` header, which generates `Makefile.PL`;
+  change it there.
 
-- Allocate with `Newx`/`Newxz`/`Renew`/`Safefree`, not `malloc`/`free`, so the
-  module uses whatever allocator its perl was built with.
-- Reach for the perl API before libc whenever perl has an equivalent
-  (`my_snprintf`, `sortsv`, `strEQ`/`foldEQ`, `PerlIO`, `PerlProc_*`): it is
-  the layer that has already been ported to every one of these platforms.
-- Nothing may depend on a GNU extension: no VLAs, no nested functions, no
-  statement expressions, no `typeof`, no `__builtin_*` without a fallback, no
-  zero-length arrays, no case ranges, no `void *` arithmetic. `LikeR.xs` must
-  keep compiling under strict `-std=c99`, which is the closest local proxy for
-  a vendor compiler — check with `-std=c99` (not `gnu99`) when in doubt.
-- C99 `restrict` is spelled bare in this file, which not every target accepts
-  (MSVC wants `__restrict` outside `/std:c11`, older gcc `__restrict__`, a C89
-  compiler has nothing). The `#if !defined(__cplusplus) && !defined(restrict)`
-  block below the includes maps or defines it away; keep that block, and if you
-  add `restrict` to a translation unit that lacks one, add the guard too.
-- The C99 flag itself is per-vendor and is probed, not guessed, by
-  `Makefile.PL` — `-std=gnu99`/`-std=c99` for gcc and clang, `-xc99=all` for
-  Oracle Studio, `-qlanglvl=extc99` for AIX `xlc`, `-AC99` for HP-UX, nothing
-  for MSVC. `$Config{cc}` is plain `cc` on Solaris and HP-UX, so it can never
-  be pattern-matched for a gcc-only flag. That logic lives in `dist.ini`'s
-  `[MakeMaker::Awesome]` header (the root `Makefile.PL` is generated from it and
-  mirrors it); change it in `dist.ini`, not only in `Makefile.PL`.
+Windows:
 
-Windows specifically:
+- A C function that calls any libc function `XSUB.h` redefines (`malloc`,
+  `free`, `realloc`, `calloc`, `fopen`, `getenv`, `exit`, sockets, …) takes
+  `pTHX_`, even a static helper that touches no SV: every Windows perl has
+  `PERL_IMPLICIT_SYS`, which routes them through `my_perl`. 0.3414's
+  `alloc_probe_ok()` lacked it and failed on Strawberry. `./test.all.perls.pl`
+  emulates this with a `win32-sys` row (a syntax check of `LikeR.c` with
+  `-DPERL_IMPLICIT_SYS -DSOCKET=int` against the newest threaded perl); a FAIL
+  there is a real Windows build failure. Do not pass `--no-win-sys` for a
+  change to `LikeR.xs`.
+- No `<unistd.h>`, `<sys/time.h>`, `<strings.h>`, `strcasecmp`/`strncasecmp`
+  (use `str_ieq_ascii()`), `fork`, or hardcoded `/` in paths.
+- Printf lengths are perl's: `%" UVuf "`, `%" IVdf "`, `%" NVgf "`,
+  `%" UVxf "`; never `%zu`, `%zd`, `%lld`, `%llu` — cast to `UV`/`IV`.
+- A test never builds a shell command line: backticks, `qx//` and one-argument
+  `system()` go through `cmd.exe`, which does not treat `'` as a quote. Use
+  list-form `system()`, put the program in a file, and pass paths in `@ARGV`.
+  `t/arg.crash.regressions.t` is the worked example (learned in 0.317).
 
-- A C function that calls any libc function `XSUB.h` redefines takes
-  `pTHX_`, even a small static helper that never touches an SV. Every Windows perl defines `PERL_IMPLICIT_SYS`
-  (and `MULTIPLICITY`), and under it `XSUB.h` rewrites `malloc`, `free`,
-  `realloc`, `calloc`, `fopen`, `getenv`, `exit`, the socket calls and much
-  of the rest of libc into `PerlMem_*`, `PerlIO_*`, `PerlEnv_*` and so on,
-  which reach the host through `my_perl`. Without `pTHX_` the function
-  compiles on every perl here and fails on every Windows perl with
-  "'my_perl' undeclared". 0.3414 shipped that way: `alloc_probe_ok()` called
-  `malloc()` with no context, and a Strawberry 5.42.3 smoker could not build
-  it. No Linux perl can be configured with `PERL_IMPLICIT_SYS`, so
-  `./test.all.perls.pl` emulates it: before the builds, it syntax-checks
-  `LikeR.c` with `-DPERL_IMPLICIT_SYS -DSOCKET=int` against the newest
-  threaded perl's headers and reports a `win32-sys` row in the summary. A
-  FAIL there is a Windows build failure, not a quirk of the emulation.
-  Against 0.3414 it reports exactly the smoker's error and nothing else.
-  `--no-win-sys` skips it, but do not skip it for a change to `LikeR.xs`.
-- No POSIX-only headers or functions: no `<unistd.h>`, `<sys/time.h>`, or
-  `<strings.h>`; no `strcasecmp`/`strncasecmp` (there is `str_ieq_ascii()` in
-  `LikeR.xs` for the case-insensitive keyword compares), no `fork`, no
-  hardcoded `/` in paths.
-- Printf lengths must be perl's: `%" UVuf "`, `%" IVdf "`, `%" NVgf "`,
-  `%" UVxf "`. `%zu`, `%zd`, `%lld` and `%llu` are not portable to MSVC's
-  older CRT — cast to `UV`/`IV` and use the perl macro.
-- A test must never build a shell command line. Backticks, `qx//` and the
-  one-argument `system()` go through `cmd.exe` there, which does not treat
-  `'` as a quote character at all, so a `sh`-quoted `-e '...'` reaches perl
-  as a syntax error. Spawn with the list form of `system()`, put the program
-  in a file, and pass paths in `@ARGV` rather than interpolating them (a
-  Windows path is full of backslashes). `t/arg.crash.regressions.t` is the
-  worked example, and 0.317 the release that had to learn it.
+Solaris, illumos and the BSDs:
 
-Solaris, illumos and the BSDs specifically:
-
-- Keep the `_GNU_SOURCE` / `__EXTENSIONS__` block at the top of `LikeR.xs`
-  intact and add to it rather than around it: `__EXTENSIONS__` is what exposes
-  the POSIX and XPG symbols on Solaris once `-std=c99`-style strictness is on,
-  and dropping it silently loses declarations.
-- Do not reach for glibc-only or BSD-only libc: no `qsort_r` (its argument
-  order differs between glibc, the BSDs and Solaris — sort with perl's
-  `sortsv`/`sortsv_flags` or a plain `qsort` with a file-static comparator),
-  no `memmem`, `strchrnul`, `strndup`, `asprintf`, `getline`, `fmemopen`,
-  `reallocarray`, `explicit_bzero`, `arc4random`, `exp10` or `sincos`.
-- Stay inside C99 `<math.h>` for float math (`lgamma`, `log2`, `round`,
-  `trunc`, `fmax` are all there); anything beyond it — `lgamma_r`, `j0`,
-  `tgammal`, `lgammaq` — is not uniformly available and needs a guard plus a
-  fallback. OpenBSD in particular is thin on the long-double variants.
-- `/dev/urandom` exists on all of these, but a randomness path must still keep
-  its documented fallback for the ones where opening it can fail.
-- Assume nothing about a struct's field order, `char`'s signedness, or
-  alignment: SPARC and some ARM/BSD combinations are strict about unaligned
-  access, so never cast a `char *` to a wider pointer type and dereference it.
+- Add to the `_GNU_SOURCE` / `__EXTENSIONS__` block at the top of
+  `LikeR.xs`, never around it; `__EXTENSIONS__` exposes POSIX and XPG
+  symbols on Solaris under strict C99.
+- No glibc- or BSD-only libc: `qsort_r` (argument order differs; use
+  `sortsv`/`sortsv_flags` or `qsort` with a file-static comparator),
+  `memmem`, `strchrnul`, `strndup`, `asprintf`, `getline`, `fmemopen`,
+  `reallocarray`, `explicit_bzero`, `arc4random`, `exp10`, `sincos`.
+- Stay within C99 `<math.h>` (`lgamma`, `log2`, `round`, `trunc` and `fmax`
+  are all there); anything beyond (`lgamma_r`, `j0`, `tgammal`,
+  `lgammaq`) needs a guard and a fallback. OpenBSD is thin on long-double
+  variants.
+- A randomness path keeps its documented fallback for when `/dev/urandom`
+  cannot be opened.
+- Assume nothing about struct field order, `char` signedness or alignment;
+  never cast a `char *` to a wider pointer type and dereference it.
 
 ### Back-compatible to perl 5.10
 
 `dist.ini` declares `perl = 5.010` and `lib/Stats/LikeR.pm` says
-`require 5.010`; both the Perl and the C sides must honor that.
+`require 5.010`.
 
-- Perl code (module and tests) is limited to 5.10 syntax: no signatures, no
-  postfix dereference, no `say` without importing the feature, no `isa`, no
-  chained comparisons, no `//=`-era-only assumptions beyond what 5.10 has.
-  Tests follow the existing header — `require 5.010; use strict; use warnings
-  FATAL => 'all';` — not `use 5.044`. The author-only helper scripts in the
-  repo root (`test.all.perls.pl`, `xs.check.pl`) are exempt; they are not
-  shipped and may use modern perl.
-- Any perl C API newer than 5.10 must come through `ppport.h`, and
-  `ppport.h` must be regenerated when a new one is used. If `ppport.h` does
-  not cover it, write the fallback rather than raising the minimum.
-- Do not use API that was merely *renamed* later, and do not rely on
-  behavior that changed after 5.10 (hash iteration order, `SvPV` return
-  guarantees, COW string semantics) without checking on `perl-5.10.1`.
-- Raising `MIN_PERL_VERSION` is a maintainer decision, not a way to make a
-  build error go away. If a change truly needs a newer perl, say so in the
-  reply and stop.
+- Perl code (module and tests) uses 5.10 syntax only: no signatures, postfix
+  dereference, unimported `say`, `isa` or chained comparisons. Tests use the
+  existing header (`require 5.010; use strict; use warnings FATAL => 'all';`),
+  not `use 5.044`. The unshipped root helpers (`test.all.perls.pl`,
+  `xs.check.pl`) are exempt.
+- Perl C API newer than 5.10 comes through `ppport.h`, regenerated when a new
+  one is used; if `ppport.h` lacks it, write the fallback.
+- Do not use API that was merely renamed later, or rely on behavior changed
+  after 5.10 (hash order, `SvPV` return guarantees, COW semantics) without
+  checking on `perl-5.10.1`.
+- Raising `MIN_PERL_VERSION` is the maintainer's decision, never a way to fix
+  a build error. If a change truly needs a newer perl, say so and stop.
 
 #### Never evaluate a `qr//` inside a leak-test block
 
-`perl-5.10.1` is the oldest perl installed here, but CPAN smokers still run
-**5.10.0**, and 5.10.0's `pp_qr()` leaks one SV every time a `qr//` is
-evaluated: it takes the package name from `reg_qr_package()`, which is a
-`newSVpvs("Regexp")`, and never releases it. The `SvREFCNT_dec(pkg)` that fixes
-it is present in 5.10.1's `pp_hot.c`, so nothing in the local matrix can
-reproduce it. 0.315 got a FAIL from a 5.10.0 smoker for exactly this, in
-`t/cfilter.t` and `t/filter_match.t`: `Test::LeakTrace` reported a leaked
-`PV "Regexp"` and blamed the line of the `no_leaks_ok` call.
-
-Compile the pattern into a lexical *before* the block and pass that in, with a
-comment saying why. The XS path under test is unchanged -- `cfilter`'s regex
-selector and `col()->match` both take a precompiled `qr//` as it comes.
+On 5.10.0, which smokers still run and nothing here reproduces, `pp_qr()`
+leaks one SV (`PV "Regexp"`) per `qr//` evaluated; 5.10.1 fixed it. 0.315
+failed `t/cfilter.t` and `t/filter_match.t` there. Compile the pattern into a
+lexical *before* the `no_leaks_ok` block, pass that in, and say why in a
+comment; `cfilter` and `col()->match` take a precompiled `qr//` unchanged.
