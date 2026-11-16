@@ -43,6 +43,21 @@ committing. `[PruneFiles]` ships everything under `lib/` and `t/`, and
 `lib/Stats/LikeR.pm.rej` in 0.3422, where `make` installed it beside the
 module.
 
+## Comments in `LikeR.xs` use `//` when they fit on one line
+
+A comment that fits on one line is a `//` comment, standalone or trailing,
+with a space after the `//`:
+
+    short int exact = -1; // -1 = decide from the sample sizes
+
+A longer comment keeps the `/* ... */` block form: the text opens on the `/*`
+line, continuation lines start at column 0 with no `*` gutter, and `*/` closes
+the last line of text.
+
+A line that ends in `\` (a macro continuation) keeps `/* ... */` even when the
+comment is short, because a `//` there swallows the backslash and ends the
+macro.
+
 ## C types must match the value's real domain
 
 Every variable and parameter in `LikeR.xs` gets the type that describes what
