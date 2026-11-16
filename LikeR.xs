@@ -14704,16 +14704,16 @@ typedef struct {
 } csv_seen;
 
 typedef struct {
-	AV     *out; //modes 0, 1 and 3
-	HV     *hout; //mode 2
-	SV    **keys; //modes 0 and 2; OWNED shared-hash-key copies, see S_plan_init()
-	AV    **cols; //mode 1 only; borrowed from the plan hash
+	AV *out; //modes 0, 1 and 3
+	HV *hout; //mode 2
+	SV **keys; //modes 0 and 2; OWNED shared-hash-key copies, see S_plan_init()
+	AV **cols; //mode 1 only; borrowed from the plan hash
 	size_t *idx; //validated against ncol in S_plan_init()
-	HV     *na; //NULL when no na_strings were given
+	HV *na; //NULL when no na_strings were given
 	const char **na_s; //na's keys, borrowed, when there are few enough; see S_plan_na()
 	STRLEN *na_len; //their lengths; NULL = look cells up in na instead
 	size_t  n_na;
-	AV     *row; //_parse_csv_file()'s row buffer, owned; NULL for an .xlsx
+	AV *row; //_parse_csv_file()'s row buffer, owned; NULL for an .xlsx
 	const char *file;
 	const char *width; //borrowed from the plan hash, as file is
 	const char *sep_note; //likewise; NULL = none
@@ -14721,17 +14721,17 @@ typedef struct {
 	size_t row_n; //data rows emitted so far, by both paths together
 	size_t n_dup; //mode 2: rows whose name an earlier row already had
 	size_t dup_row; //mode 2: the data row of the first of those, 0 = none yet
-	SV    *dup_first; //mode 2: that row's name, OWNED; NULL = none yet
+	SV *dup_first; //mode 2: that row's name, OWNED; NULL = none yet
 	size_t span_line; //0 = the row is on one line; else where the quote that ran it across lines opened
 	size_t span_to; //the line that field ran on to, 0 = the end of the file
-	SV    **flt; //the filter subs, in the order they run; borrowed from the plan hash
+	SV **flt; //the filter subs, in the order they run; borrowed from the plan hash
 	size_t *flt_fld; //each one's field: 0 = the whole row, else the field's index + 1
 	size_t  nflt; //0 = no filter, and S_fast_row() moves the cells as they are
 	SSize_t *fj; //filter path, per field: its output column; -1 = a later field repeats its name
-	GP     *def_gp; //filter path: *_'s GP when %_ was aliased, see S_flt_restore_defhv()
+	GP *def_gp; //filter path: *_'s GP when %_ was aliased, see S_flt_restore_defhv()
 	unsigned char *cls; //colClasses, per field: 0 = character, kept as its text, 1 = numeric, 2 = integer, 3 = not declared, see S_text_is_iv(); NULL = every field is 0
-	SV    **fname; //with cls: each field's header name, borrowed from the plan's 'hdr'
-	HV     *def_hv; //and the %_ it held then, OWNED until put back; NULL = none
+	SV **fname; //with cls: each field's header name, borrowed from the plan's 'hdr'
+	HV *def_hv; //and the %_ it held then, OWNED until put back; NULL = none
 	short int mode; // 0 = aoh, 1 = hoa, 2 = hoh, 3 = aoa
 	bool span_mid; //that quote came after text in its field
 	bool active; //has the callback filled the plan in yet
@@ -14957,6 +14957,21 @@ static void S_plan_init(pTHX_ csv_plan *restrict p, HV *restrict h){
 					croak("_parse_csv_file: plan 'cls' entry %" UVuf " is not 0, 1, 2 or 3", (UV)f);
 				p->cls[f]   = (unsigned char)code;
 				p->fname[f] = *n;
+			}
+			/*A field no output column reads -- the earlier of two fields with
+			one header name -- is converted by nothing else (an .xlsx and a
+			filtered read convert through idx, and so does the perl closure),
+			so S_push_cell() must not convert it either: it croaked on a
+			value in a column the table never held.  An aoa keeps every field.*/
+			if (p->mode != 3) {
+				bool *used;
+				Newxz(used, p->ncol ? p->ncol : 1, bool);
+				for (size_t j = 0; j < p->nout; j++)
+					used[p->idx[j]] = TRUE;
+				for (size_t f = 0; f < p->ncol; f++)
+					if (!used[f])
+						p->cls[f] = 0;
+				Safefree(used); //nothing between the two can croak
 			}
 		}
 	}
@@ -15325,7 +15340,7 @@ PERL_STATIC_INLINE bool S_bytes_is_na(pTHX_ const csv_plan *restrict p,
 
 /*Field f's cell as it is stored, in place: S_cell_value(), then colClasses.
 Only for cells that were not made final as they were cut (csv_plan's
-cut_final): an .xlsx's.*/
+cut_final): an .xlsx's*/
 PERL_STATIC_INLINE void S_cell_store_in(pTHX_ const csv_plan *restrict p, size_t f, SV **slot){ //slot: in perl's AV
 	*slot = S_cell_value(aTHX_ p, *slot);
 	S_cell_class_in(aTHX_ p, f, slot);
@@ -25566,13 +25581,18 @@ PERL_STATIC_INLINE size_t size_add_sat(size_t a, size_t b) {
 }
 /*buf's string buffer, with room for `need` more bytes after SvCUR and a NUL.
 It doubles, because perl before 5.20 grows a string by exactly what is asked
-for and a table is appended to a cell at a time.*/
+for and a table is appended to a cell at a time.
+
+Each growth is probed first, so a size that cannot be had is a croak rather
+than SvGROW() ending the process: gap => 1e12 asks for a terabyte of spaces.
+Growth doubles, so the probes are a few dozen however large the table.*/
 PERL_STATIC_INLINE char *buf_room(pTHX_ SV *buf, STRLEN need) {
 	const STRLEN cur = SvCUR(buf);
 	if (SvLEN(buf) - cur <= need) {
 		if (need >= (STRLEN)-1 - cur - 1) croak("view: the table is too large to render");
 		STRLEN want = SvLEN(buf) * 2;
 		if (want < cur + need + 1) want = cur + need + 1; //also where doubling wrapped
+		if (!alloc_probe_ok(aTHX_ want)) croak("view: the table is too large to render");
 		SvGROW(buf, want);
 	}
 	return SvPVX(buf);
@@ -26163,6 +26183,13 @@ static int view_key_cmp(const char *restrict a, STRLEN al, bool au, const char *
 PERL_STATIC_INLINE int view_keysv_cmp(SV *a, SV *b) { //both plain strings of this file's making
 	return view_key_cmp(SvPVX_const(a), SvCUR(a), cBOOL(SvUTF8(a)), SvPVX_const(b), SvCUR(b), cBOOL(SvUTF8(b)));
 }
+/*Whether he's key was a UTF-8 string that perl stored downgraded to Latin-1.
+
+HePV() gives such a key's Latin-1 bytes and HeUTF8() says FALSE, but keys() and
+hv_iterkeysv() give it back as the UTF-8 string it was, so a label read through
+HePV() alone printed "é" as the lone byte E9 where a flat hash's printed C3 A9.
+A tied hash's iterator hands out an SV key (HEf_SVKEY), which has no flags.*/
+#define VIEW_HE_WASUTF8(he) (HeKLEN(he) != HEf_SVKEY && (HeKFLAGS(he) & HVhek_WASUTF8))
 /*A walk over a hash's entries that leaves no trace on the hash.
 
 hv_iterinit() gives a hash an iterator if it has none, and the hash keeps it:
@@ -26278,8 +26305,9 @@ static AV *view_first_keys(pTHX_ HV *hv, size_t show) {
 		const char *kp = HePV(he, kl); //no restrict: the hash's own key, or a tied iterator's
 		const bool ku = cBOOL(HeUTF8(he));
 		SV **h = AvARRAY(heap); //no restrict: perl's; not moved, as nothing is pushed
+		const bool was = VIEW_HE_WASUTF8(he); //kp is Latin-1 for a UTF-8 key; view_key_cmp() orders it the same
 		if (n < show) {
-			h[n] = newSVpvn_flags(kp, kl, ku ? SVf_UTF8 : 0);
+			h[n] = was ? newSVhek(HeKEY_hek(he)) : newSVpvn_flags(kp, kl, ku ? SVf_UTF8 : 0); //newSVhek() upgrades it back
 			AvFILLp(heap) = (SSize_t)n;
 			for (size_t i = n++; i > 0; ) { //sift up
 				const size_t up = (i - 1) / 2;
@@ -26290,6 +26318,7 @@ static AV *view_first_keys(pTHX_ HV *hv, size_t show) {
 		} else if (view_key_cmp(kp, kl, ku, SvPVX_const(h[0]), SvCUR(h[0]), cBOOL(SvUTF8(h[0]))) < 0) {
 			sv_setpvn(h[0], kp, kl); //the largest kept key gives way; its SV is reused
 			if (ku) SvUTF8_on(h[0]); else SvUTF8_off(h[0]);
+			if (was) sv_utf8_upgrade(h[0]);
 			view_heap_down(h, 0, n);
 		}
 	}
@@ -26302,13 +26331,17 @@ static AV *view_first_keys(pTHX_ HV *hv, size_t show) {
 	}
 	return heap;
 }
-// Every key of hv, sorted, as a mortal array of copies.
+/*Every key of hv, sorted, as a mortal array of copies.
+
+Each key is made straight from its HEK, as hv_iterkeysv() makes it but without
+the mortal that call adds: copying that mortal left one temporary per key alive
+until view() returned, a million of them for a million-key hash.*/
 static AV *view_sorted_keys(pTHX_ HV *hv) {
 	AV *keys = (AV *)sv_2mortal((SV *)newAV());
 	view_walk w;
 	view_walk_begin(aTHX_ &w, hv, TRUE);
 	for (HE *he; (he = view_walk_next(aTHX_ &w)) != NULL; )
-		av_push(keys, newSVsv(hv_iterkeysv(he)));
+		av_push(keys, HeKLEN(he) == HEf_SVKEY ? newSVsv(HeSVKEY(he)) : newSVhek(HeKEY_hek(he)));
 	view_walk_end(aTHX_ &w);
 	if (AvFILLp(keys) > 0) sortsv(AvARRAY(keys), (size_t)AvFILLp(keys) + 1, Perl_sv_cmp);
 	return keys;
@@ -26318,6 +26351,12 @@ static void view_keys_into(pTHX_ HV *seen, HV *row) {
 	view_walk w;
 	view_walk_begin(aTHX_ &w, row, TRUE);
 	for (HE *he; (he = view_walk_next(aTHX_ &w)) != NULL; ) {
+		if (VIEW_HE_WASUTF8(he)) { //by its Latin-1 bytes it would come back out of seen as bytes
+			SV *const k = newSVhek(HeKEY_hek(he));
+			(void)hv_fetch_ent(seen, k, 1, 0);
+			SvREFCNT_dec(k);
+			continue;
+		}
 		STRLEN kl;
 		const char *kp = HePV(he, kl); //no restrict: the hash's own key
 		(void)hv_fetch(seen, kp, HeUTF8(he) ? -(I32)kl : (I32)kl, 1);

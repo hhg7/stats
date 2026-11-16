@@ -365,4 +365,27 @@ unless ($INC{'Devel/Cover.pm'}) {
 	} 'read_table(drop_cols, filter) croaking on an undefined row name: no memory leaks';
 }
 
+# A header that repeats a name keeps the last field of that name, and
+# colClasses is not applied to the earlier one, which the table never holds:
+# up to 0.3423 the CSV parser converted it anyway and croaked on its value,
+# where an .xlsx and the perl closure read the same table.  An aoa keeps every
+# field, so it is still converted, and still refused, there.
+{
+	my $file = spew('csv', "e,b,e\nx,2,3\n");
+	my @cls = (colClasses => [ 'integer', 'character', 'integer' ]);
+	local $SIG{__WARN__} = sub { die @_ unless $_[0] =~ /duplicate column name/ };
+	for my $closure (0, 1) {
+		my @c = $closure ? (_closure => 1) : ();
+		my $how = $closure ? 'closure' : 'plan';
+		is_deeply(read_table($file, @cls, @c), [ { e => 3, b => '2' } ],
+			"read_table: colClasses skips a field a repeated name shadows (aoh, $how)");
+		is_deeply(read_table($file, @cls, @c, output_type => 'hoa'), { e => [3], b => ['2'] },
+			"read_table: likewise for a hoa ($how)");
+		is_deeply(read_table($file, @cls, @c, output_type => 'hoh', row_names => 'b'), { 2 => { e => 3 } },
+			"read_table: likewise for a hoh ($how)");
+		throws_ok { read_table($file, @cls, @c, output_type => 'aoa') } qr/colClasses makes column 'e' \(field 1\) integer/,
+			"read_table: an aoa keeps the field, so colClasses still refuses it ($how)";
+	}
+}
+
 done_testing();

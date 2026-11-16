@@ -30,6 +30,47 @@ Revision history for Stats-LikeR
    perl 5.44.0 reproduced both failures here, at the same subtests, and
    passes the whole suite with the fix. That perl is now part of the
    test matrix this is released against.
+ - colClasses is no longer applied to a field the table never holds.
+   When a header repeats a name, the last field of that name is the
+   column, and a CSV read still converted the earlier ones as it cut
+   them, so read_table() croaked over a value in a column it was about
+   to throw away ('e,b,e' over 'x,2,3' with colClasses integer for
+   both e). An .xlsx and the perl row closure already read that table
+   as { e => 3, b => 2 }. An aoa keeps every field, so there the field
+   is still converted and still refused.
+
+ [view()]
+
+ - A hash key that perl holds downgraded, such as a UTF-8 "é" stored as
+   the byte E9, is now shown as the UTF-8 string keys() returns. It was
+   read from its stored bytes and printed as a lone E9 byte in a HoH's
+   row labels and in the column names of an AoH, a HoA or a HoH, while
+   a flat hash printed the same key as C3 A9.
+ - A gap that no buffer can hold, such as gap => 1e12, is now refused
+   with "view: the table is too large to render" instead of ending perl
+   with "Out of memory".
+ - Listing every key of a hash no longer makes one temporary copy per
+   key that lived until view() returned.
+
+ [Data-frame helpers]
+
+ - concat() and rbind() skip an empty frame of either kind, as their
+   documentation says. An empty [] among HoAs, or {} among AoHs, was
+   dereferenced as the other kind and died "Not a HASH reference".
+ - melt() keeps a name given twice in id_vars once. Each mention was
+   pushed again, so a hoa's id column came out twice as long as the
+   rest. A hoa is now built a column at a time, which melts 300,000
+   rows of two id and five value columns in 0.17 s instead of 0.62 s,
+   and the other output types decide their shape once rather than once
+   per cell.
+ - ffill() and bfill() with limit count only the cells they can write.
+   A row that is no hash, or an AoA row too short for the column, was
+   counted against the limit, so ffill([{a => 1}, undef, {a => undef}],
+   limit => 1) left the last row unfilled.
+ - chunk() in scalar context gives 0 for empty input, not undef, and
+   refuses a bad size or parts for empty input as for any other.
+ - aoh2hoh()'s errors for a row that is no hash and for a missing key
+   now name the function, as its other errors do.
 
 0.3422 2026-11-13 CST (Claude Fable 5.2 helped)
 
