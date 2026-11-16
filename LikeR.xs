@@ -14567,12 +14567,17 @@ hoh changes in S_fast_row(), it took the best of seven reads of that CSV from
 and 0.357 s to 0.339 s for a 300,000-row hoh, on perl 5.44.0.
 
 A slot past the fill may still hold a pointer from an earlier row, which is not
-a reference: the fill is what says what the array owns.*/
+a reference: the fill is what says what the array owns.
+
+sv may be NULL: S_push_cell() stores one for a field 'drop_cols' leaves out.
+So a full array is grown with av_extend() and written the same way, never
+handed to av_push(), which on a -DDEBUGGING perl asserts its value is not NULL
+and aborted t/read_table.keep_cols.t and t/read_table.drop_cols.t on every
+such smoker of 0.3422.*/
 PERL_STATIC_INLINE void S_av_push_own(pTHX_ AV *restrict av, SV *restrict sv){
-	if (AvFILLp(av) < AvMAX(av))
-		AvARRAY(av)[++AvFILLp(av)] = sv;
-	else
-		av_push(av, sv);
+	if (AvFILLp(av) >= AvMAX(av))
+		av_extend(av, AvFILLp(av) + 1);
+	AvARRAY(av)[++AvFILLp(av)] = sv;
 }
 
 /*Hand a finished row to the callback (streaming) or to @$data (slurp), and

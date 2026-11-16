@@ -195,6 +195,7 @@ a subset); run it for anything touching `LikeR.xs`. Under
 | `5.44.0-i686` | `double` | 32-bit, `ivsize=4`: `IV_MAX` 2147483647; listed as `double/iv4` |
 | `5.44.0-i686-64int` | `double` | 32-bit, `ivsize=8`, `ptrsize=4` (CPAN's `i686-linux-64int`); listed as `double/iv8p4` |
 | `5.16.3-thr-ld` | `long double` | `useithreads`, `usemultiplicity`, `USE_REENTRANT_API`; the only threaded perl older than 5.20 |
+| `5.44.0-debug` | `double` | `-DDEBUGGING`: perl's internal `assert()`s are live (see below) |
 
 As a fast check, compile-check all three NV widths without reconfiguring the
 tree (which would clobber the `Makefile`) by generating the `.c` and compiling
@@ -215,6 +216,27 @@ the `\s`/`\w` inversion lists of every pattern compiled at run time, and
   from 5.10 on with no perl in the matrix. When a smoker fails on one,
   install that series' last release under perlbrew, run `--deps` once, and
   reproduce there before changing anything.
+
+### A DEBUGGING perl asserts what a normal one allows
+
+A perl configured with `-DDEBUGGING` compiles in its internal `assert()`s; a
+normal perl silently accepts what they reject. Several smokers run only
+DEBUGGING perls, so such a bug fails every one of their reports and none of
+anyone else's. All 11 FAILs of 0.3422 were this: `S_av_push_own()` handed
+`av_push()` the NULL `S_push_cell()` stores for a column `keep_cols` or
+`drop_cols` leaves out, and `Perl_av_push` aborted with "Assertion `val'
+failed". Those smokers' perls were also long double or quadmath, which was
+the testers' configuration, not the cause: check ccflags for `-DDEBUGGING`
+before trusting an NV-width pattern in the reports.
+
+- Never pass NULL to `av_push`, `av_store`, `hv_store` or any other API that
+  takes a value. A NULL slot is written directly into an array this code
+  owns and has checked has no magic, after `av_extend()` if it is full, as
+  `S_av_push_own()` does.
+- `5.44.0-debug` is in the matrix for this. To check another API's assertion
+  without it, generate `LikeR.c` in a scratch copy of the tree, redefine the
+  macro after `#include "XSUB.h"` to abort on the asserted condition, build,
+  and run the whole suite.
 
 ### The IV is not always 64 bits
 

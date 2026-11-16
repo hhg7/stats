@@ -13,6 +13,24 @@ Revision history for Stats-LikeR
    as it has done for *.orig since 0.3415 and 0.3416 shipped
    lib/Stats/LikeR.pm.orig.
 
+ [read_table()]
+
+ - read_table() with keep_cols or drop_cols no longer aborts perl on a
+   perl built with -DDEBUGGING. The parser stands a NULL in its row
+   buffer for each field whose column is left out, and when the buffer
+   was full it stored that NULL with av_push(), which such a perl
+   asserts against ("Perl_av_push: Assertion `val' failed"). It now
+   grows the buffer with av_extend() and stores the NULL itself, as it
+   already did while there was room. A perl without -DDEBUGGING stored
+   the NULL correctly and was never affected. The module was at fault,
+   not the tests: t/read_table.keep_cols.t died before its first
+   subtest and t/read_table.drop_cols.t after its 17th or 33rd, in all
+   11 FAIL reports for 0.3422, every one from a -DDEBUGGING perl
+   (5.30.1 to 5.45.4, double, long double and quadmath). A -DDEBUGGING
+   perl 5.44.0 reproduced both failures here, at the same subtests, and
+   passes the whole suite with the fix. That perl is now part of the
+   test matrix this is released against.
+
 0.3422 2026-11-13 CST (Claude Fable 5.2 helped)
 
  [view()]
