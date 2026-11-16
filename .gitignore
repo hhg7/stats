@@ -60,11 +60,13 @@ nytprof/
 # Vim swap files, left beside whatever file is open in an editor.
 .*.swp
 
-# Backups left by patch(1) and by hand-applied edits. dzil.sh already keeps
-# *.orig out of what it adds, but one already tracked shipped anyway:
-# lib/Stats/LikeR.pm.orig was in the 0.3415 and 0.3416 tarballs, because
-# [PruneFiles] keeps everything under lib/.
+# Backups and rejects left by patch(1) and by hand-applied edits. dzil.sh keeps
+# both out of what it adds, but tracked ones shipped anyway, because
+# [PruneFiles] keeps everything under lib/: lib/Stats/LikeR.pm.orig was in the
+# 0.3415 and 0.3416 tarballs, and lib/Stats/LikeR.pm.rej in 0.3422, where make
+# copied it into blib/lib and so into site_perl on install.
 *.orig
+*.rej
 
 # Python's bytecode cache, beside the reference scripts that write tables.
 __pycache__/
