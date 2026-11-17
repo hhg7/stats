@@ -38,7 +38,7 @@
 # every root-level script, and Makefile.PL's libscan keeps it out of
 # `make install`), so it may use modern perl.
 
-use 5.036;
+use 5.044;
 use warnings FATAL => 'all';
 use Getopt::Long 'GetOptions';
 use HTTP::Tiny;
@@ -49,6 +49,7 @@ use File::Spec ();
 use FindBin ();
 use version ();
 use Matplotlib::Simple 'colored_table';
+use DDP;
 
 my %opt = (
 	columns => 'osname',	# osname = one column per OS; platform = one per archname
@@ -109,6 +110,7 @@ my $fh = File::Temp->new(TEMPLATE => 'cpantesters-matrix-XXXXXX', SUFFIX => '.py
 binmode $fh, ':encoding(UTF-8)';
 print {$fh} python_prelude(\%links);
 my $total = @these;
+p %grades;
 colored_table(
 	output_file => $output,
 	fh          => $fh,
@@ -117,6 +119,7 @@ colored_table(
 	cmap        => 'RdYlGn',
 	cb_min      => 0,
 	cb_max      => 1,
+	cbpad       => 0.01,
 	cblabel     => 'share of PASS among PASS + FAIL',
 	undef_color => 'white',
 	set_title   => sprintf('%s %s: %d reports, %d PASS, %d FAIL, %d NA, %d UNKNOWN',

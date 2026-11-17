@@ -378,7 +378,7 @@ unless ($INC{'Devel/Cover.pm'}) {
 }
 
 # A key perl stores downgraded (a UTF-8 "é" held as the byte E9, flagged
-# HVhek_WASUTF8) is the UTF-8 string keys() gives back.  Up to 0.3423's fix the
+# HVhek_WASUTF8) is the UTF-8 string keys() gives back.  Up to 0.3422 the
 # HoH row labels and the AoH, HoA and HoH column names were read from the
 # stored bytes and printed a lone E9, while a flat hash printed C3 A9.
 {

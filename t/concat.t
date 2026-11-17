@@ -161,7 +161,7 @@ no_leaks_ok {
 }
 
 # An empty frame of the other kind ([] among HoAs, {} among AoHs) is skipped
-# like any other empty frame.  Up to 0.3423 it was dereferenced as the first
+# like any other empty frame.  Up to 0.3422 it was dereferenced as the first
 # frame's kind and died "Not a HASH reference".
 is_deeply(concat({ a => [1] }, [], { a => [2] }), { a => [1, 2] }, 'concat: an empty AoA among HoAs is skipped');
 is_deeply(concat([], { a => [1] }), { a => [1] }, 'concat: an empty AoA before a HoA is skipped');

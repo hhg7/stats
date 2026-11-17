@@ -153,7 +153,7 @@ no_leaks_ok {
 	eval { melt([ { A => 1 } ], value_vars => 'Z') };
 } 'melt: no memory leaks (die path)';
 
-# A name given twice in id_vars is one id column.  Up to 0.3423 it was pushed
+# A name given twice in id_vars is one id column.  Up to 0.3422 it was pushed
 # once per mention, and a hoa's id column came out twice as long as the rest.
 {
 	my $df = { id => [1, 2], a => [3, 4], b => [5, 6] };

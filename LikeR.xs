@@ -929,6 +929,17 @@ static void args_get_magic(pTHX_ Stack_off_t ax, Stack_off_t items){
 	}
 }
 
+/*The croaks of the overflow-recovery passes below, which re-read a tied array
+and so can find it different from the first pass.*/
+static void args_reread_missing(pTHX_ const char *fname, SSize_t j, Stack_off_t i) __attribute__noreturn__;
+static void args_reread_resized(pTHX_ const char *fname) __attribute__noreturn__;
+static void args_reread_missing(pTHX_ const char *fname, SSize_t j, Stack_off_t i){
+	croak("%s: undefined value at array ref index %" UVuf " (argument %" UVuf ")", fname, (UV)j, (UV)i);
+}
+static void args_reread_resized(pTHX_ const char *fname){
+	croak("%s: a tied array changed its length between reads", fname);
+}
+
 /*The mean of the arguments that sum(), mean(), sd() and var() have just
 totalled into acc.
 
@@ -939,7 +950,9 @@ gives 1e308 and this gave Inf, and var() and sd() then took every deviation
 from an infinite mean and returned NaN where R gives 0.  An infinite value
 among them stays infinite in the second pass too, so the answer is still Inf
 when it should be.  A tied array is FETCHed again for that pass; nothing else
-reaches it.*/
+reaches it.  That pass enforces the first pass's contract: a missing element
+croaks as it did there, and a tied array whose length changed between the two
+reads croaks rather than dividing a different sample by the first count.*/
 static NV args_mean_of(pTHX_ Stack_off_t ax, Stack_off_t items, const char *fname, const NvAcc *restrict acc){
 	const NV n = (NV)acc->count, total = nv_acc_total(acc);
 	if (!nv_isinf(total)) return total / n;
@@ -951,10 +964,12 @@ static NV args_mean_of(pTHX_ Stack_off_t ax, Stack_off_t items, const char *fnam
 			const SSize_t len = av_len(av) + 1;
 			for (SSize_t j = 0; j < len; j++) {
 				SV *tv = av_slow_at(aTHX_ av, j);
-				if (tv) nv_acc_add(&sc, nv_arg_at(aTHX_ tv, fname, (UV)j, (UV)i) / n);
+				if (!tv) args_reread_missing(aTHX_ fname, j, i);
+				nv_acc_add(&sc, nv_arg_at(aTHX_ tv, fname, (UV)j, (UV)i) / n);
 			}
 		} else if (SvOK(arg)) nv_acc_add(&sc, nv_arg(aTHX_ arg, fname, (UV)i) / n);
 	}
+	if (sc.count != acc->count) args_reread_resized(aTHX_ fname);
 	return nv_acc_total(&sc);
 }
 
@@ -966,7 +981,8 @@ was Inf here, because the partial sum 2e308 overflows a double.  Scaling by
 at most count * NV_MAX / 2**e) and is exact, so ldexp() restores the result
 bit for bit; a sum that really exceeds NV_MAX stays Inf, and an infinite
 input stays Inf.  Only reached when the first pass ended infinite, so the
-ordinary path pays one nv_isinf() test.*/
+ordinary path pays one nv_isinf() test.  A re-read tied array is held to the
+first pass's contract as in args_mean_of().*/
 static NV args_sum_rescaled(pTHX_ Stack_off_t ax, Stack_off_t items, const char *fname, size_t count, NV total){
 	if (!nv_isinf(total)) return total;
 	int e = 0;
@@ -979,10 +995,12 @@ static NV args_sum_rescaled(pTHX_ Stack_off_t ax, Stack_off_t items, const char 
 			const SSize_t len = av_len(av) + 1;
 			for (SSize_t j = 0; j < len; j++) {
 				SV *tv = av_slow_at(aTHX_ av, j);
-				if (tv) nv_acc_add(&sc, nv_ldexp(nv_arg_at(aTHX_ tv, fname, (UV)j, (UV)i), -e));
+				if (!tv) args_reread_missing(aTHX_ fname, j, i);
+				nv_acc_add(&sc, nv_ldexp(nv_arg_at(aTHX_ tv, fname, (UV)j, (UV)i), -e));
 			}
 		} else if (SvOK(arg)) nv_acc_add(&sc, nv_ldexp(nv_arg(aTHX_ arg, fname, (UV)i), -e));
 	}
+	if (sc.count != count) args_reread_resized(aTHX_ fname);
 	return nv_ldexp(nv_acc_total(&sc), e);
 }
 
@@ -15338,6 +15356,16 @@ PERL_STATIC_INLINE bool S_bytes_is_na(pTHX_ const csv_plan *restrict p,
 	return p->na && n <= (STRLEN)I32_MAX && hv_exists(p->na, s, (I32)n);
 }
 
+/*Whether field f of a data row will be a NULL slot that S_fast_row() passes
+over: 'drop_cols' leaves its column out and no filter reads the row (which
+S_push_cell() tests as undef_empty).  Before the plan is filled in, skip is
+NULL.  A field past the width is a ragged row's, about to croak, and is kept.
+The parsers use it to leave such a field's text uncopied: a quoted CSV field
+is not gathered into the accumulator, and an .xlsx cell is not built.*/
+PERL_STATIC_INLINE bool S_field_dropped(const csv_plan *restrict p, size_t f){
+	return p->active && p->undef_empty && p->skip && f < p->ncol && p->skip[f];
+}
+
 /*Field f's cell as it is stored, in place: S_cell_value(), then colClasses.
 Only for cells that were not made final as they were cut (csv_plan's
 cut_final): an .xlsx's*/
@@ -17114,7 +17142,8 @@ branch av_extend() took.*/
 	ary = AvARRAY(w->row);
 	for (size_t j = 0; j < w->width; j++) //undef on the fast path, as S_push_cell() does
 		if (XLSX_IS_HOLE(ary[j]))
-			ary[j] = w->plan->undef_empty ? newSV(0) : newSVpvs("");
+			ary[j] = S_field_dropped(w->plan, j) ? NULL //as S_push_cell() leaves it, which S_fast_row() passes over
+			       : w->plan->undef_empty ? newSV(0) : newSVpvs("");
 	w->maxc = 0;
 	w->any  = 0;
 	if (w->plan->active) {
@@ -17374,6 +17403,14 @@ lie past the width; it is dropped, as a self-closing one is, rather than
 stored past the end of a row that is meant to be 'width' long.*/
 				if (ci >= w->width)
 					continue;
+/*A cell 'drop_cols' leaves out is not built, only asked whether it has a
+value: a row whose only values are in dropped columns is still a row, not a
+blank one (xlsx_ws_row_end()), as it was when the cell was built and freed.*/
+				if (S_field_dropped(w->plan, ci)) {
+					if (!w->any && xlsx_cell_has_value(w, a, alen, body, blen))
+						w->any = 1;
+					continue;
+				}
 				v = xlsx_cell_value(aTHX_ w, a, alen, body, blen);
 /*av_store() releases whatever was in the slot, which is what makes a repeated
 r= in one row -- only malformed input produces one -- keep the last cell rather
@@ -21983,7 +22020,10 @@ static void ip_fill_column(pTHX_ AV *vals, AV *xav, const char *method,
 				croak("interpolate: method '%s' needs strictly increasing x coordinates", method);
 
 		IV order = SvOK(order_sv) ? SvIV(order_sv) : 0;
-		int deg = -1, extrap = 0, ktype = 0;
+		/*deg holds the caller's order, so it is an IV like order: an int
+		narrowed order => 4294967297 to 1 and accepted it as linear.*/
+		IV deg = -1; // -1 = method has no polynomial degree
+		int extrap = 0, ktype = 0;
 		if      (!strcmp(method, "pchip")) { ktype = IP_KPCHIP; extrap = 1; }
 		else if (!strcmp(method, "akima")) { ktype = IP_KAKIMA; extrap = 0; }
 		else if (!strcmp(method, "barycentric") || !strcmp(method, "krogh")) { ktype = IP_KBARY; extrap = 1; }
@@ -22002,7 +22042,7 @@ static void ip_fill_column(pTHX_ AV *vals, AV *xav, const char *method,
 					croak("interpolate: method '%s' (degree 3) needs at least 4 numeric anchors", method);
 				ktype = IP_KCUBIC;
 			} else
-				croak("interpolate: method '%s' supports order 1, 2, or 3 (got %ld)", method, (long)order);
+				croak("interpolate: method '%s' supports order 1, 2, or 3 (got %" IVdf ")", method, order);
 		}
 		if (ktype == IP_KAKIMA && na == 2) ktype = IP_KCUBIC;// akima degenerates to the line
 
@@ -23315,36 +23355,101 @@ static NV dens_iqr(const NV *xs, size_t n){
 /*seq.int(from, to, length.out = m).  seq.int is a primitive, and do_seq() in
 src/main/seq.c writes the two endpoints in exactly rather than accumulating to
 them, which is why `up` and `to` come back bit-exact and the interpolation grid
-never runs off the end of the FFT grid.*/
-static void dens_seq(NV from, NV to, size_t m, NV *out){
-	if (m == 0) return;
-	out[0] = from;
-	if (m > 1) out[m - 1] = to;
-	if (m > 2) {
-		NV by = (to - from) / (NV)(m - 1);
-		for (size_t i = 1; i < m - 1; i++) out[i] = from + (NV)i * by;
-	}
+never runs off the end of the FFT grid.
+
+dens_seq_at() is element i of that sequence, given by = dens_seq_by(); density()
+calls it for grid points it no longer stores, and dens_seq() is built on it so
+that a stored and a recomputed point cannot differ.*/
+PERL_STATIC_INLINE NV dens_seq_by(NV from, NV to, size_t m){
+	return m > 2 ? (to - from) / (NV)(m - 1) : 0.0; // 0 = unused: m <= 2 is all endpoints
+}
+PERL_STATIC_INLINE NV dens_seq_at(NV from, NV to, NV by, size_t m, size_t i){
+	if (i == 0) return from;
+	if (i == m - 1) return to;
+	return from + (NV)i * by;
+}
+static void dens_seq(NV from, NV to, size_t m, NV *restrict out){
+	const NV by = dens_seq_by(from, to, m);
+	for (size_t i = 0; i < m; i++) out[i] = dens_seq_at(from, to, by, m, i);
 }
 
-/*approx1() from src/library/stats/src/approx.c: linear interpolation of
-(x, y) at v, with the interval found by bisection.  method = "linear" and
-rule = 1, which are what density() asks approx() for, so a v outside [x0, xn]
-would be NA -- it never is here, since the output grid is a sub-interval of the
-FFT grid.*/
-static NV dens_approx1(NV v, const NV *x, const NV *y, size_t n){
-	if (n == 0) return NV_NAN;
-	if (n == 1) return (v == x[0]) ? y[0] : NV_NAN;
-	size_t i = 0, j = n - 1;
-	if (v < x[i]) return NV_NAN;
-	if (v > x[j]) return NV_NAN;
-	while (i < j - 1) {
-		size_t ij = (i + j) / 2;
-		if (v < x[ij]) j = ij; else i = ij;
-	}
-	if (v == x[j]) return y[j];
-	if (v == x[i]) return y[i];
-	return y[i] + (y[j] - y[i]) * ((v - x[i]) / (x[j] - x[i]));
+/*The FFT grid seq.int(lo, up, length.out = n) that density() interpolates on,
+described rather than stored: at n = 2**26 it was 512 MB of NVs.  `strict`
+says that no two adjacent points rounded to the same NV, which is what lets
+dens_approx_grid() find an interval arithmetically.*/
+typedef struct { NV lo, up, by; size_t n; bool strict; } dens_grid;
+
+static void dens_grid_init(dens_grid *restrict g, NV lo, NV up, size_t n){
+	g->lo = lo; g->up = up; g->n = n; g->by = dens_seq_by(lo, up, n);
+	g->strict = TRUE;
+	for (size_t k = 1; k < n; k++)
+		if (!(dens_seq_at(lo, up, g->by, n, k) > dens_seq_at(lo, up, g->by, n, k - 1))) {
+			g->strict = FALSE;
+			break;
+		}
 }
+#define DENS_GX(g, k) dens_seq_at((g)->lo, (g)->up, (g)->by, (g)->n, (k))
+
+/*approx1() from src/library/stats/src/approx.c: linear interpolation of
+(x, y) at v, x being the grid g.  method = "linear" and rule = 1, which are
+what density() asks approx() for, so a v outside [x0, xn] would be NA -- it
+never is here, since the output grid is a sub-interval of the FFT grid.
+
+R finds the interval by bisection, at O(log n) per point.  On a strictly
+increasing grid that bisection ends on the one i <= n - 2 with x[i] <= v <
+x[i+1] (or i = n - 2 when v == x[n-1]), which is also the largest i <= n - 2
+with x[i] <= v; so the guess (v - lo) / by, off by rounding at most a step or
+two, is walked to that i and gives the same interval in O(1).  A grid with
+tied points (a range narrower than n ulps of its magnitude) can make
+bisection land on either of two equal points, so it keeps the bisection,
+over recomputed points.*/
+static NV dens_approx_grid(NV v, const dens_grid *restrict g, const NV *restrict y){
+	const size_t n = g->n;
+	if (n == 0) return NV_NAN;
+	if (n == 1) return (v == g->lo) ? y[0] : NV_NAN;
+	size_t i = 0, j = n - 1;
+	if (v < DENS_GX(g, i)) return NV_NAN;
+	if (v > DENS_GX(g, j)) return NV_NAN;
+	if (g->strict) {
+		const NV t = (v - g->lo) / g->by;
+		i = (t >= (NV)(n - 2)) ? n - 2 : (t > 0.0) ? (size_t)t : 0; //NaN t gives 0
+		while (i > 0 && v < DENS_GX(g, i)) i--;
+		while (i < n - 2 && v >= DENS_GX(g, i + 1)) i++;
+		j = i + 1;
+	} else {
+		while (i < j - 1) {
+			size_t ij = (i + j) / 2;
+			if (v < DENS_GX(g, ij)) j = ij; else i = ij;
+		}
+	}
+	const NV xi = DENS_GX(g, i), xj = DENS_GX(g, j);
+	if (v == xj) return y[j];
+	if (v == xi) return y[i];
+	return y[i] + (y[j] - y[i]) * ((v - xi) / (xj - xi));
+}
+
+/*Every buffer density() allocates, freed together at its LEAVE by one
+SAVEDESTRUCTOR_X(), so that one can also be freed the moment it is dead
+(DENS_DROP) without LEAVE freeing it a second time, as a SAVEFREEPV() of it
+would.  The holder is itself on the heap: a croak runs the destructor after
+density()'s C frame is gone.*/
+typedef struct {
+	NV *xall, *wall, *xv, *wv, *xf, *wf, *xs, *yre, *yim, *kre, *kim, *twr, *twi;
+	bool *isna;
+} dens_bufs;
+
+static void dens_bufs_free(pTHX_ void *p){
+	dens_bufs *b = (dens_bufs *)p;
+	Safefree(b->xall); Safefree(b->wall); Safefree(b->isna);
+	Safefree(b->xv);   Safefree(b->wv);   Safefree(b->xf);  Safefree(b->wf);
+	Safefree(b->xs);   Safefree(b->yre);  Safefree(b->yim);
+	Safefree(b->kre);  Safefree(b->kim);  Safefree(b->twr); Safefree(b->twi);
+	Safefree(b);
+}
+/*Allocate local `f` and record it in the holder B; free it early and forget it.*/
+#define DENS_NEWX(f, cnt, T)  STMT_START { Newx(f, cnt, T);  B->f = f; } STMT_END
+#define DENS_NEWXZ(f, cnt, T) STMT_START { Newxz(f, cnt, T); B->f = f; } STMT_END
+#define DENS_DROP(f)          STMT_START { Safefree(B->f); B->f = NULL; f = NULL; } STMT_END
 
 /*In-place radix-2 Cooley-Tukey.  n must be a power of two, which it always is
 here: density() rounds its grid up to one before this is reached.  `sign` is -1
@@ -31735,19 +31840,23 @@ line cost an ASCII file read with qr/\s+/u 4%.*/
 		}
 		for (size_t i = i0; i < len; ) {
 			if (in_quotes) {
+				//a dropped field's quoted text is scanned for its end but not kept
+				const bool drop = S_field_dropped(plan, (size_t)(AvFILLp(plan->row) + 1));
 				const char *q = (const char *)memchr(line + i, '"', len - i);
 				if (!q) {
-					sv_catpvn(field, line + i, len - i);
+					if (!drop)
+						sv_catpvn(field, line + i, len - i);
 					break;
 				}
 				{
 					size_t run = (size_t)(q - (line + i));
-					if (run)
+					if (run && !drop)
 						sv_catpvn(field, line + i, run);
 					i += run;
 				}
 				if (i + 1 < len && line[i+1] == '"') {
-					sv_catpvn(field, "\"", 1);
+					if (!drop)
+						sv_catpvn(field, "\"", 1);
 					i += 2;
 				} else {
 					in_quotes = 0;
@@ -31877,7 +31986,7 @@ instead.  Up to 0.3416 this was always "\n", so "a\r\nb" came back "a\nb".  A
 file ending inside the quote gets no line end it did not have.*/
 		if (in_quotes) {
 			const char *const end = SvPVX(line_sv) + SvCUR(line_sv);
-			if (end > eol)
+			if (end > eol && !S_field_dropped(plan, (size_t)(AvFILLp(plan->row) + 1)))
 				sv_catpvn(field, eol, (STRLEN)(end - eol));
 			if (!span_line) {
 				span_line = q_line;
@@ -44844,8 +44953,12 @@ SV* density(...)
 			else if (strEQ(key, "from"))  { from = SvNV(val); have_from = 1; }
 			else if (strEQ(key, "to"))    { to   = SvNV(val); have_to   = 1; }
 			else if (strEQ(key, "nb")) {
-				IV v = SvIV(val);
-				if (v <= 0) usage_croak(aTHX_ "density", "invalid 'nb'");
+				/*R's bw.*() bound (as.integer() is NA above INT_MAX), checked on the
+				IV as bw_opts_parse() does: where size_t is 32 bits and the IV 64, an
+				nb of 2**32 truncated to 0 and dens_pair_cnts() wrote cnt[0] of an
+				empty table.*/
+				const IV v = SvIV(val);
+				if (v <= 0 || v > (IV)INT_MAX) usage_croak(aTHX_ "density", "invalid 'nb'");
 				nb = (size_t)v;
 			}
 			else if (strEQ(key, "kernel")) {
@@ -44883,8 +44996,9 @@ SV* density(...)
 		} else {
 		NV *xall = NULL, *wall = NULL, *xv = NULL, *wv = NULL;
 		NV *xf = NULL, *wf = NULL, *xs = NULL, *yre = NULL, *yim = NULL, *kre = NULL, *kim = NULL;
-		NV *twr = NULL, *twi = NULL, *xords = NULL, *xout = NULL;
-		bool *restrict isna = NULL;
+		NV *twr = NULL, *twi = NULL;
+		bool *isna = NULL; //no restrict: also held, and freed, through B->isna
+		dens_bufs *B = NULL;
 		const char *err = NULL;
 		bool err_usage = FALSE; //err is about an argument's form, so density's help screen goes with it
 		char errbuf[256];
@@ -44898,19 +45012,23 @@ SV* density(...)
 			usage_croak(aTHX_ "density", "'x' is required and must be an array reference");
 		if (n_arg < 1) usage_croak(aTHX_ "density", "'n' must be at least 1");
 		if (n_arg > (IV)1 << 26) usage_croak(aTHX_ "density", "'n' is too large");
-	/*Every buffer is SAVEFREEPV()d inside ENTER/LEAVE.  They used to be freed
+	/*Every buffer is held in B, which LEAVE frees.  They used to be freed
 	at dens_cleanup, which the two warn()s below skip when $SIG{__WARN__}
 	dies, as does an element whose numeric overload dies: about 957 kB a call
-	at 20000 points.*/
+	at 20000 points.  Each is dropped as soon as nothing later reads it, so
+	that the input copies, the sorted copy and the FFT workspace are not all
+	alive at once, nor alive while the output arrays are built.*/
 		ENTER;
+		Newxz(B, 1, dens_bufs);
+		SAVEDESTRUCTOR_X(dens_bufs_free, B);
 	/*Elements are read through av_slow_at(), which runs get magic before
 	SvOK() is asked: av_fetch() and SvOK() saw every element of a tied array
 	as undef, so density(\@tied) croaked that 'x' had missing values.*/
 		{
 			AV *xav = (AV *)SvRV(x_sv);
 			N0 = (size_t)(av_len(xav) + 1);
-			Newx(xall, N0 ? N0 : 1, NV); SAVEFREEPV(xall);
-			Newx(isna, N0 ? N0 : 1, bool); SAVEFREEPV(isna);
+			DENS_NEWX(xall, N0 ? N0 : 1, NV);
+			DENS_NEWX(isna, N0 ? N0 : 1, bool);
 			for (size_t i = 0; i < N0; i++) {
 				SV *el = av_slow_at(aTHX_ xav, (SSize_t)i);
 				if (!el) {
@@ -44938,7 +45056,7 @@ SV* density(...)
 				err = "'x' and 'weights' have unequal length";
 				goto dens_cleanup;
 			}
-			Newx(wall, N0 ? N0 : 1, NV); SAVEFREEPV(wall);
+			DENS_NEWX(wall, N0 ? N0 : 1, NV);
 			for (size_t i = 0; i < N0; i++) {
 				/*A missing weight is NA, which the finiteness check below
 				refuses; a weight that is not a number used to be read as 0
@@ -44966,8 +45084,8 @@ SV* density(...)
 			err = "'x' has no non-missing values";
 			goto dens_cleanup;
 		}
-		Newx(xv, N, NV); SAVEFREEPV(xv);
-		if (has_wts) { Newx(wv, N, NV); SAVEFREEPV(wv); }
+		DENS_NEWX(xv, N, NV);
+		if (has_wts) DENS_NEWX(wv, N, NV);
 		{
 			bool trueD = 0;
 			if (nna && has_wts) {
@@ -44987,12 +45105,13 @@ SV* density(...)
 				for (size_t i = 0; i < N; i++) s += wv[i];
 				for (size_t i = 0; i < N; i++) wv[i] /= s;
 			}
+			DENS_DROP(xall); DENS_DROP(isna); DENS_DROP(wall);
 		}
  //Infinite observations are point masses outside the grid: they leave
  //the estimate a sub-density on (-Inf, Inf) rather than being dropped.
 		for (size_t i = 0; i < N; i++) if (nv_isfinite(xv[i])) nx++;
-		Newx(xf, nx ? nx : 1, NV); SAVEFREEPV(xf);
-		Newx(wf, nx ? nx : 1, NV); SAVEFREEPV(wf);
+		DENS_NEWX(xf, nx ? nx : 1, NV);
+		DENS_NEWX(wf, nx ? nx : 1, NV);
 		{
 			size_t k = 0;
 			for (size_t i = 0; i < N; i++) if (nv_isfinite(xv[i])) xf[k++] = xv[i];
@@ -45019,6 +45138,7 @@ SV* density(...)
 			if (!subdensity && !(nv_fabs(1.0 - wsum) <= DENS_ALL_EQ_TOL))
 				warn("density: sum(weights) != 1  -- will not get true density");
 		}
+		DENS_DROP(xv); DENS_DROP(wv);
 		n_user = (size_t)n_arg;
 		n = n_user < 512 ? 512 : n_user;
 		if (n > 512) { size_t p = 512; while (p < n) p <<= 1; n = p; }
@@ -45053,12 +45173,13 @@ SV* density(...)
 				else w_varies = (nx > 1 && dens_var(wf, nx) > 0.0) ? 1 : 0;
 				if (w_varies) warn("density: selecting bandwidth *not* using 'weights'");
 			}
-			Newx(xs, nx, NV); SAVEFREEPV(xs);
+			DENS_NEWX(xs, nx, NV);
 			Copy(xf, xs, nx, NV);
 			nv_sort(xs, nx); //inlined comparison; see LIKER_DEFINE_SORT
 			err = dens_bw_rule(aTHX_ bw_rule, xf, xs, nx, nb,
 			                   FALSE, 0.0, FALSE, 0.0, FALSE, 0.0, &bw);
 			if (err) goto dens_cleanup;
+			DENS_DROP(xs);
 		}
 		if (!nv_isfinite(bw)) { err = "non-finite 'bw'"; goto dens_cleanup; }
 		bw *= adjust;
@@ -45075,16 +45196,16 @@ SV* density(...)
 		if (!nv_isfinite(from)) { err = "non-finite 'from'"; goto dens_cleanup; }
 		if (!nv_isfinite(to))   { err = "non-finite 'to'";   goto dens_cleanup; }
 		m = 2 * n;
-		Newx(yre, m, NV);  SAVEFREEPV(yre); Newxz(yim, m, NV); SAVEFREEPV(yim);
-		Newx(kre, m, NV);  SAVEFREEPV(kre); Newxz(kim, m, NV); SAVEFREEPV(kim);
-		Newx(twr, m / 2, NV); SAVEFREEPV(twr); Newx(twi, m / 2, NV); SAVEFREEPV(twi);
-		Newx(xords, n, NV); SAVEFREEPV(xords);
-		Newx(xout, n_user, NV); SAVEFREEPV(xout);
+		DENS_NEWX(yre, m, NV); DENS_NEWXZ(yim, m, NV);
+		DENS_NEWX(kre, m, NV); DENS_NEWXZ(kim, m, NV);
+		DENS_NEWX(twr, m / 2, NV); DENS_NEWX(twi, m / 2, NV);
+		dens_grid xg;
 		{
 			NV lo = from - ext * bw, up = to + ext * bw;
 			NV mult = old_coords ? 2.0 : (NV)(2 * n - 1) / (NV)(n - 1);
 			const NV pi = DENS_PI;
 			dens_bindist(xf, wf, nx, lo, up, n, yre);
+			DENS_DROP(xf); DENS_DROP(wf);
 			for (size_t i = 0; i < m; i++) yre[i] *= totMass;
 			dens_kernel_grid(kernel, bw, mult * (up - lo), n, kre);
 			for (size_t k = 0; k < m / 2; k++) {
@@ -45099,25 +45220,30 @@ SV* density(...)
 				NV pj = yim[i] * kre[i] - yre[i] * kim[i];
 				yre[i] = pr; yim[i] = pj;
 			}
+			DENS_DROP(kre); DENS_DROP(kim);
 			for (size_t k = 0; k < m / 2; k++) twi[k] = -twi[k]; //inverse
 			dens_fft(yre, yim, twr, twi, m);
+			DENS_DROP(yim); DENS_DROP(twr); DENS_DROP(twi);
 			/*pmax.int(0, Re(.)[1:n] / length(y)): the kernel is non-negative,
-			so anything below zero here is rounding error (PR#8876)*/
+			so anything below zero here is rounding error (PR#8876).  Written
+			back over yre[0..n), which nothing reads again.*/
 			for (size_t i = 0; i < n; i++) {
 				NV v = yre[i] / (NV)m;
-				kre[i] = (v > 0.0) ? v : 0.0;
+				yre[i] = (v > 0.0) ? v : 0.0;
 			}
-			dens_seq(lo, up, n, xords);
-			dens_seq(from, to, n_user, xout);
+			Renew(yre, n, NV); B->yre = yre; //give back the dead upper half
+			dens_grid_init(&xg, lo, up, n);
 		}
 
 		{
 			AV *xav_out = newAV(), *yav_out = newAV();
 			av_extend(xav_out, (SSize_t)n_user - 1);
 			av_extend(yav_out, (SSize_t)n_user - 1);
-			for (size_t i = 0; i < n_user; i++) {
-				av_push(xav_out, newSVnv(xout[i]));
-				av_push(yav_out, newSVnv(dens_approx1(xout[i], xords, kre, n)));
+			const NV xby = dens_seq_by(from, to, n_user);
+			for (size_t i = 0; i < n_user; i++) { //x is seq.int(from, to, length.out = n_user)
+				const NV xo = dens_seq_at(from, to, xby, n_user, i);
+				av_push(xav_out, newSVnv(xo));
+				av_push(yav_out, newSVnv(dens_approx_grid(xo, &xg, yre)));
 			}
 			res = newHV();
 			hv_stores(res, "x",          newRV_noinc((SV *)xav_out));
@@ -45130,7 +45256,7 @@ SV* density(...)
 		}
 
 		dens_cleanup:
-		LEAVE; //frees every buffer above
+		LEAVE; //frees every buffer still held in B
 		if (err && err_usage) usage_croak(aTHX_ "density", "%s", err);
 		if (err) {
 			my_snprintf(errbuf, sizeof(errbuf), "density: %s", err);

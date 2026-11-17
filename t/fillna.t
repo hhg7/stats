@@ -209,7 +209,7 @@ no_leaks_ok {
 	   'bfill: an unknown option prints the help screen');
 }
 
-# `limit` counts only the cells ffill/bfill can write.  Up to 0.3423 a row that
+# `limit` counts only the cells ffill/bfill can write.  Up to 0.3422 a row that
 # is no hash, or an AoA row too short to hold the column, counted against it,
 # so ffill([{a=>1}, undef, {a=>undef}], limit => 1) left the last row unfilled.
 is_deeply(ffill([ { a => 1 }, undef, { a => undef } ], limit => 1), [ { a => 1 }, undef, { a => 1 } ],
