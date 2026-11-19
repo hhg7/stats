@@ -105,6 +105,7 @@ my %svpv_audited = (
 	'const char *key = SvPV(tv, klen);'                => 'mode(): the hash length after it carries SvUTF8',
 	'const char *key = SvPV(arg, klen);'               => 'mode(): the hash length after it carries SvUTF8',
 	'const char*key = SvPV(arg2, klen);'               => 'value_counts(): the hash length after it carries SvUTF8',
+	'const char *kp = SvPV(sv, l);'                    => 'fr_key_init(): klen, set from SvUTF8 on the next lines, is what reaches the hash',
 );
 
 my @report;

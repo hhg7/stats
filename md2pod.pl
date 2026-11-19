@@ -4,19 +4,15 @@ use 5.044;
 no source::encoding;
 use warnings FATAL => 'all';
 use autodie ':default';
-#use DDP {output => 'STDOUT', array_max => 10, show_memsize => 1};
-use Devel::Confess 'color';
 use Markdown::To::POD 'markdown_to_pod';
 use Test::More;
 use Test::Pod;
 use Test::CPAN::Changes;
+use Cn::Util;
 
-sub file2string {
-	my $file = shift;
-	open my $fh, '<', $file;
-	return do { local $/; <$fh> };
+foreach my $svg (dir(regex => '^cpantesters\..+svg$')) {
+	unlink $svg or die "Can't unlink \"$svg\": $!";
 }
-
 # Split one GFM table row into its cells.
 #
 # GFM lets a cell contain a literal pipe as "\\|", so splitting on every pipe
