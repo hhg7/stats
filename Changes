@@ -162,6 +162,37 @@ Revision history for Stats-LikeR
    t/incomplete.gamma.beta.mpmath.py). It fails 236 and 577 of its tests
    on the 0.3425 code on a long double and a __float128 perl.
 
+ [Tests]
+
+ - t/power_t_test.R.scipy.t is split four ways, so that no one file is
+   the long pole of a parallel test run: the rows that solve for n, for
+   delta, and for sd or sig_level move to t/power_t_test.solve_n.R.scipy.t,
+   t/power_t_test.solve_delta.R.scipy.t and
+   t/power_t_test.solve_sd_sig_level.R.scipy.t. Each solve evaluates the
+   noncentral t CDF about 20 times at a fixed 30000-step quadrature,
+   about 4 s on a __float128 perl, where the one file took 470 s and the
+   whole suite 586 s under HARNESS_OPTIONS=j4. With the split and the
+   cuts below, the suite takes 255 s there.
+ - 462 assertions that repeated a computation another one already makes
+   are gone. Every one-sided row was mirrored as alternative => 'greater'
+   and 'less', but power_t_test() takes one.sided's branch for 'greater'
+   and only negates delta, exactly, for 'less', so each mirror repeated
+   its row to the bit; one row per solved parameter is kept, for the sign
+   handling. Twenty one-sided rows with strict => 1 matched their
+   non-strict partners, expected values included, since strict only adds
+   the far tail of a two-sided test; one per type is kept. The
+   power_t_test() block of t/01.t checked values the table already
+   checks, the solved n at a tolerance 1e5 looser, and repeated its leak
+   checks.
+ - t/power_t_test.R.scipy.t now calls power_t_test() with n, and with
+   delta, left out rather than passed as undef, and checks both for
+   leaks. The XS tests for an absent argument separately; only t/01.t
+   called it without n, and nothing called it without delta.
+ - test.all.perls.pl --deps runs cpanm --installdeps . rather than
+   scraping module names from Makefile.PL, which checked each with
+   -MModule and so ignored minimum versions: a fresh 5.10 perl, with core
+   Scalar::Util 1.21, passed it against PREREQ_PM's 1.22.
+
 0.3425 2026-11-18 CST (Claude Opus 5.5 helped)
 
  [Data frames]
