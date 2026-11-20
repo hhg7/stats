@@ -16818,6 +16818,21 @@ might hold some) is not an error: that string comes back as the bytes it holds,
 with no UTF-8 flag, and the strings beside it are decoded as usual. A delimited
 file is not affected; its fields are still bytes.
 
+B<Blank rows are rows.> A row with no value that lies between the header and
+the last row with a value is a row of C<undef>, whether it is empty
+(C<< E<lt>row r="3"/E<gt> >>, or C<< E<lt>row r="3"E<gt>E<lt>/rowE<gt> >> as C<write_table> writes a row of empty
+cells), holds only cells that have formatting and no value, or is missing from
+the XML altogether, as Excel leaves an empty row out. That is how pandas'
+C<read_excel> reads it, and a table C<write_table> wrote with a row of C<undef> in
+it reads back with that row. Rows past the last row with a value are not read,
+as pandas does not read them either: Excel records rows it has only formatted
+below a table. The header is the first row with a value; pandas instead takes a
+blank first row as the header. With C<< output_type =E<gt> 'hoh' >> a blank row is left
+out, since it has no row name, where a CSV record of empty fields is refused.
+Rows are taken in the order the XML gives them, and a row's C<r=> number only
+says how many blank rows lie before it. Up to 0.3425 every row with no value
+was dropped. Tested in C<t/read_table.xlsx.blank_rows.pandas.t>.
+
 B<Multiple worksheets.> If the workbook has more than one worksheet and no
 C<sheet> is given, C<read_table> returns a B<hashref keyed by worksheet name>,
 each value being that sheet parsed just as a single table would be (honouring
@@ -19231,6 +19246,15 @@ A hash of arrays has as many rows as the longest of the arrays it writes; an arr
 
 An empty C<{}> or C<[]> is a table with no rows, and is written as one: the header C<col_names> and C<row_names> give, if any, and otherwise a single empty record. C<< write_table([], 'out.csv', 'col_names' =E<gt> ['A'], 'row_names' =E<gt> 1) >> writes C<,A>, as pandas writes C<DataFrame({"A": []}).to_csv()>.
 
+Delimited output is UTF-8. A string perl holds as characters is written as the
+UTF-8 of its characters, and one it holds as bytes is written as it stands when
+it is valid UTF-8 — so the fields C<read_table> returns from a UTF-8 file are
+written back unchanged — and read as Latin-1 when it is not, so C<"caf\xe9">
+and C<"café">, which are the same string to perl, are both written C<café>. This
+is the reading the C<.xlsx> and LaTeX writers give text too. Up to 0.3425 a
+string held as bytes was written as those bytes, and C<"caf\xe9"> came out as a
+single byte E9, which Python's C<csv>, pandas and R read as C<caf\x{FFFD}>.
+
 Every cell of delimited output is written whole, including one holding a NUL byte, and a cell of a tied hash or array (such as C<Tie::IxHash>) is read through its C<FETCH>. A number is formatted the way perl formats it, but in a copy, so writing a table does not add a string buffer to every numeric scalar in it. Nor does finding an AoH's or a HoH's columns leave an iterator on every row hash, as walking them with C<keys> would. A row that is a restricted hash (C<Hash::Util::lock_keys>) may lack some of the columns; those cells are written empty, where they used to die with I<Attempt to access disallowed key>.
 
 A field is quoted when it holds a quote (which is doubled), a line break or the separator, as Python's C<csv.writer> quotes, and in two more places where C<read_table> would otherwise not see the record at all. With a separator of more than one character, a field is also quoted when its end and the separator written after it would spell the separator early -- C<"a:"> before C<::>, which would otherwise be written C<a:::> and read back cut at the first C<::>. A record of a single field that is empty, C<undef> or nothing but spaces and tabs is written quoted, C<""> or C<"  ">, because a blank line is skipped on reading; C<csv.writer> writes C<['']> and C<[None]> the same way. The first field of a record is quoted when it starts with C<#>, C<read_table>'s default comment character.
@@ -19383,7 +19407,11 @@ XML 1.0 cannot hold a NUL, most other control characters, the noncharacters
 U+FFFE and U+FFFF, or a surrogate, and a workbook holding one is refused by its
 readers. In a cell each is written as Excel's own escape, C<_xHHHH_> (C<\r> is
 C<_x000D_>), which Excel and LibreOffice turn back into the character, as
-XlsxWriter does. A literal C<_x0041_> in a cell is written C<_x005F_x0041_> so
+XlsxWriter does. A lone surrogate is written the same way, C<_xD800_>, rather
+than refused, but it is not a character any encoding has, and LibreOffice shows
+an empty cell for it; C<read_table> reads it back as written. In a delimited
+file it is written as perl's own UTF-8 for it, three bytes a UTF-8 reader
+replaces. A literal C<_x0041_> in a cell is written C<_x005F_x0041_> so
 that it is not mistaken for one, and so is every other underscore that would
 open an escape, overlapping ones included, so that a reader decoding left to
 right gets back exactly the text written.

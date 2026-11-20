@@ -44,9 +44,10 @@ use Stats::LikeR 'read_table';
 #     non-Char, an unclosed CDATA section, a <sheet> with no name, an <rPh>
 #     without its sb= and eb=. This reader leaves the reference in the text,
 #     reads on to the end of the part, and names the sheet "SheetN".
-#   - openpyxl places rows by their r= and pads a gap with an empty row, and
-#     keeps a trailing column that holds only empty cells; this reader drops
-#     both, as it always has (README.md, "Excel (.xlsx) files").
+#   - openpyxl keeps a trailing column that holds only empty cells; this
+#     reader drops it, as it always has (README.md, "Excel (.xlsx) files").
+#     Both place rows by their r= and pad a gap with an empty row, this
+#     reader since 0.3426 (up to 0.3425 it dropped the gap).
 # Where openpyxl's rules are written down:
 #   - openpyxl/cell/text.py, Text.content: a string's text is its <t> and its
 #     <r><t> runs; <rPh> is parsed into Text.rPh and is not part of it
@@ -321,8 +322,9 @@ sub chars { my ($s) = @_; utf8::decode($s) or die "not UTF-8"; return $s }
 	         . '<row r="7"><c r="A7" t="inlineStr"><is><t><![CDATA[]]>x<![CDATA[y]]></t></is></c></row>',
 		'<si><t>s0</t></si><!-- <si><t>gone</t></si> --><si><t><![CDATA[s&1]]></t></si>');
 	is_deeply( read_table($f, 'output_type' => 'aoa'),
-		[ ['h'], [13], ['a&amp;b<c></t>'], [45], ['s&1'], ['xy'] ],
-		'comments are dropped, a commented-out <row> or <si> included, and CDATA is its literal text' );
+		[ ['h'], [undef], [13], ['a&amp;b<c></t>'], [45], ['s&1'], ['xy'] ],
+		'comments are dropped, a commented-out <row> or <si> included (row 2 is then missing, '
+		. 'a row of undef as openpyxl reads it), and CDATA is its literal text' );
 	# An unclosed CDATA section runs to the end of the part, as an unclosed
 	# element does, and its text is all there is left. Not XML, so this is
 	# this reader's answer alone: expat refuses the part.

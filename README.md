@@ -7004,6 +7004,21 @@ might hold some) is not an error: that string comes back as the bytes it holds,
 with no UTF-8 flag, and the strings beside it are decoded as usual. A delimited
 file is not affected; its fields are still bytes.
 
+**Blank rows are rows.** A row with no value that lies between the header and
+the last row with a value is a row of `undef`, whether it is empty
+(`<row r="3"/>`, or `<row r="3"></row>` as `write_table` writes a row of empty
+cells), holds only cells that have formatting and no value, or is missing from
+the XML altogether, as Excel leaves an empty row out. That is how pandas'
+`read_excel` reads it, and a table `write_table` wrote with a row of `undef` in
+it reads back with that row. Rows past the last row with a value are not read,
+as pandas does not read them either: Excel records rows it has only formatted
+below a table. The header is the first row with a value; pandas instead takes a
+blank first row as the header. With `output_type => 'hoh'` a blank row is left
+out, since it has no row name, where a CSV record of empty fields is refused.
+Rows are taken in the order the XML gives them, and a row's `r=` number only
+says how many blank rows lie before it. Up to 0.3425 every row with no value
+was dropped. Tested in `t/read_table.xlsx.blank_rows.pandas.t`.
+
 **Multiple worksheets.** If the workbook has more than one worksheet and no
 `sheet` is given, `read_table` returns a **hashref keyed by worksheet name**,
 each value being that sheet parsed just as a single table would be (honouring
@@ -8639,6 +8654,15 @@ A hash of arrays has as many rows as the longest of the arrays it writes; an arr
 
 An empty `{}` or `[]` is a table with no rows, and is written as one: the header `col_names` and `row_names` give, if any, and otherwise a single empty record. `write_table([], 'out.csv', 'col_names' => ['A'], 'row_names' => 1)` writes `,A`, as pandas writes `DataFrame({"A": []}).to_csv()`.
 
+Delimited output is UTF-8. A string perl holds as characters is written as the
+UTF-8 of its characters, and one it holds as bytes is written as it stands when
+it is valid UTF-8 — so the fields `read_table` returns from a UTF-8 file are
+written back unchanged — and read as Latin-1 when it is not, so `"caf\xe9"`
+and `"café"`, which are the same string to perl, are both written `café`. This
+is the reading the `.xlsx` and LaTeX writers give text too. Up to 0.3425 a
+string held as bytes was written as those bytes, and `"caf\xe9"` came out as a
+single byte E9, which Python's `csv`, pandas and R read as `caf\x{FFFD}`.
+
 Every cell of delimited output is written whole, including one holding a NUL byte, and a cell of a tied hash or array (such as `Tie::IxHash`) is read through its `FETCH`. A number is formatted the way perl formats it, but in a copy, so writing a table does not add a string buffer to every numeric scalar in it. Nor does finding an AoH's or a HoH's columns leave an iterator on every row hash, as walking them with `keys` would. A row that is a restricted hash (`Hash::Util::lock_keys`) may lack some of the columns; those cells are written empty, where they used to die with *Attempt to access disallowed key*.
 
 A field is quoted when it holds a quote (which is doubled), a line break or the separator, as Python's `csv.writer` quotes, and in two more places where `read_table` would otherwise not see the record at all. With a separator of more than one character, a field is also quoted when its end and the separator written after it would spell the separator early -- `"a:"` before `::`, which would otherwise be written `a:::` and read back cut at the first `::`. A record of a single field that is empty, `undef` or nothing but spaces and tabs is written quoted, `""` or `"  "`, because a blank line is skipped on reading; `csv.writer` writes `['']` and `[None]` the same way. The first field of a record is quoted when it starts with `#`, `read_table`'s default comment character.
@@ -8772,7 +8796,11 @@ XML 1.0 cannot hold a NUL, most other control characters, the noncharacters
 U+FFFE and U+FFFF, or a surrogate, and a workbook holding one is refused by its
 readers. In a cell each is written as Excel's own escape, `_xHHHH_` (`\r` is
 `_x000D_`), which Excel and LibreOffice turn back into the character, as
-XlsxWriter does. A literal `_x0041_` in a cell is written `_x005F_x0041_` so
+XlsxWriter does. A lone surrogate is written the same way, `_xD800_`, rather
+than refused, but it is not a character any encoding has, and LibreOffice shows
+an empty cell for it; `read_table` reads it back as written. In a delimited
+file it is written as perl's own UTF-8 for it, three bytes a UTF-8 reader
+replaces. A literal `_x0041_` in a cell is written `_x005F_x0041_` so
 that it is not mistaken for one, and so is every other underscore that would
 open an escape, overlapping ones included, so that a reader decoding left to
 right gets back exactly the text written.

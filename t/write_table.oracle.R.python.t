@@ -376,8 +376,8 @@ my %golden = (
 		xlsx => "<c r=\"A2\" t=\"inlineStr\"><is><t xml:space=\"preserve\">caf\xC3\xA9</t></is></c>",
 	},
 	"Latin-1 as bytes" => {
-		csv => "v,w\x0Acaf\xE9,z\x0A",
-		tsv => "v\x09w\x0Acaf\xE9\x09z\x0A",
+		csv => "v,w\x0Acaf\xC3\xA9,z\x0A",
+		tsv => "v\x09w\x0Acaf\xC3\xA9\x09z\x0A",
 		xlsx => "<c r=\"A2\" t=\"inlineStr\"><is><t xml:space=\"preserve\">caf\xC3\xA9</t></is></c>",
 	},
 	"Greek" => {
@@ -490,23 +490,17 @@ my %read = (
 	"csv/R/BOM at start" => "a",
 	"csv/R/CR inside" => "a\x{A}b",
 	"csv/R/CRLF inside" => "a\x{A}b",
-	"csv/R/Latin-1 as bytes" => "caf\x{FFFD}",
 	"csv/R/NUL inside" => "SHAPE:[['a', '']]",
 	"csv/R/lone surrogate" => "\x{FFFD}\x{FFFD}\x{FFFD}",
-	"csv/csv/Latin-1 as bytes" => "caf\x{FFFD}",
 	"csv/csv/lone surrogate" => "\x{FFFD}\x{FFFD}\x{FFFD}",
-	"csv/pandas/Latin-1 as bytes" => "caf\x{FFFD}",
 	"csv/pandas/NUL inside" => "a",
 	"csv/pandas/lone surrogate" => "\x{FFFD}\x{FFFD}\x{FFFD}",
 	"tsv/R/BOM at start" => "a",
 	"tsv/R/CR inside" => "a\x{A}b",
 	"tsv/R/CRLF inside" => "a\x{A}b",
-	"tsv/R/Latin-1 as bytes" => "caf\x{FFFD}",
 	"tsv/R/NUL inside" => "SHAPE:[['a', '']]",
 	"tsv/R/lone surrogate" => "\x{FFFD}\x{FFFD}\x{FFFD}",
-	"tsv/csv/Latin-1 as bytes" => "caf\x{FFFD}",
 	"tsv/csv/lone surrogate" => "\x{FFFD}\x{FFFD}\x{FFFD}",
-	"tsv/pandas/Latin-1 as bytes" => "caf\x{FFFD}",
 	"tsv/pandas/NUL inside" => "a",
 	"tsv/pandas/lone surrogate" => "\x{FFFD}\x{FFFD}\x{FFFD}",
 	"xlsx/LibreOffice/CRLF inside" => ['s', "a\x{A}b"],
@@ -524,18 +518,17 @@ my %read = (
 # END GENERATED
 
 
+
 my %why;
-my $latin1 = 'a string perl holds as Latin-1 bytes is written as those bytes, not as '
-	. 'UTF-8, so a UTF-8 reader gets U+FFFD; the same string with the UTF-8 flag on is '
-	. "written as UTF-8 ('Latin-1 as characters'). Open since 2026-10-03 (xs.check.pl's "
-	. 'write_table findings): the maintainer has not decided';
-my $surrogate = 'a lone surrogate has no UTF-8, and is written as the bytes ED A0 80, '
-	. 'which no UTF-8 reader accepts; whether write_table should refuse it is not decided';
+# A lone surrogate is not a character any Unicode encoding has: only broken
+# data (a UTF-16 pair cut in half) holds one.  The maintainer decided on
+# 2026-11-20 that write_table() writes it rather than refusing the table, so
+# it goes out as perl's own UTF-8 for it, and as _xD800_ in an .xlsx.
+my $surrogate = 'a lone surrogate has no UTF-8; it is written as perl\'s bytes for it, '
+	. 'ED A0 80, which a UTF-8 reader replaces, rather than refused (the maintainer\'s '
+	. 'decision of 2026-11-20); read_table() reads it back as written';
 for my $fmt (qw(csv tsv)) {
-	for my $reader (qw(csv pandas R)) {
-		$why{"$fmt/$reader/Latin-1 as bytes"} = [todo => $latin1];
-		$why{"$fmt/$reader/lone surrogate"}   = [todo => $surrogate];
-	}
+	$why{"$fmt/$_/lone surrogate"} = [documented => $surrogate] for qw(csv pandas R);
 	$why{"$fmt/R/BOM at start"} = [reader => 'R drops U+FEFF from a field anywhere in '
 		. 'the file, not only at its start; Python\'s csv and pandas return it'];
 	$why{"$fmt/R/$_"} = [reader => 'R turns a CR or CR LF inside a quoted field into LF; '
@@ -545,9 +538,9 @@ for my $fmt (qw(csv tsv)) {
 	$why{"$fmt/pandas/NUL inside"} = [reader => 'pandas\' C parser ends a field at a NUL; '
 		. 'Python\'s csv reads it whole'];
 }
-$why{'xlsx/LibreOffice/lone surrogate'} = [todo => 'written _xD800_, which the POD says '
-	. 'Excel and LibreOffice turn back into the character; LibreOffice shows an empty cell. '
-	. 'read_table() reads it back as U+D800, so only another reader shows this'];
+$why{'xlsx/LibreOffice/lone surrogate'} = [documented => 'written _xD800_, Excel\'s escape, '
+	. 'rather than refused; LibreOffice shows an empty cell, as the POD says, and '
+	. 'read_table() reads it back as U+D800'];
 $why{'xlsx/LibreOffice/CRLF inside'} = [reader => 'LibreOffice turns a CR LF in a cell '
 	. 'into LF; "a\rb" alone comes back whole, so the _x000D_ escape itself is read'];
 $why{"xlsx/openpyxl/$_"} = [reader => 'openpyxl returns the _xHHHH_ escape of '

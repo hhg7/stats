@@ -128,68 +128,12 @@ block that uses them), so a stale or end value cannot be read by mistake.
 Do not churn functions just to move declarations; apply this to new code and
 functions already being edited.
 
-## Tests must come from R's and Python's own test suites
+## Tests
 
-If a function has an R or Python (SciPy, NumPy, pandas, statsmodels)
-equivalent, its tests are **taken from those projects' test suites and
-documented examples**, not invented: invented cases only confirm what the code
-currently does. Read the local copies rather than recalling them:
-
-- R 4.6.1, `/home/con/Scripts/r-source`: `tests/reg-tests-1{a,b,c,d,e}.R` and
-  `tests/reg-tests-2.R`, examples in `src/library/stats/man/*.Rd`, their output
-  in `tests/Examples/stats-Ex.Rout.save`.
-- SciPy 1.18.0,
-  `/home/con/.pyenv/versions/3.14.2/lib/python3.14/site-packages/scipy/stats/tests/`:
-  grep the whole directory, since classes move between files across releases
-  (1.18.0 moved `TestSpearmanRho`, `TestTheilslopes` and `TestSiegelslopes`
-  into `test_correlation.py`, leaving `TestPearsonr`, `TestCorrSpearmanr`,
-  `TestKendallTau` in `test_stats.py`); check `test_morestats.py`,
-  `test_rank.py`, `test_quantile.py` and `test_hypotests.py` too. `data/`
-  holds R-generated corpora reusable as Perl test data.
-- NumPy 2.5.2, same `site-packages`: `numpy/_core/tests/`,
-  `numpy/lib/tests/`, each with a `data/`.
-
-Check **both** R and Python before calling a function covered; coverage is
-lopsided in unexpected directions (R has one `binom.test` case in all of
-`reg-tests-*.R`; SciPy pins dozens, annotated "results from R").
-
-### Freeze the expected values
-
-A test must pass with no R, `python3`, NumPy or SciPy installed:
-
-- Expected values are full-precision literals in the `.t` file
-  (`options(digits=17)` in R, `repr()` in Python).
-- No `Rscript`, `python3`, `qx{}` or `system()`, and no `skip_all`/`SKIP`
-  conditioned on a reference being installed; such a test never runs on a
-  smoker.
-- A generator worth keeping is committed beside the test with a comment on
-  how to re-run it (`t/bedroc.python.py` for `t/bedroc.python.t`); the test
-  never calls it.
-- The header comment records each value's provenance: reference, version,
-  file, test function or man page, and any upstream note on the number's
-  origin. Model: `t/binom_test.R.scipy.t`, including the naming
-  (`t/<fn>.R.scipy.t`, separate from the hand-written `t/<fn>.t`).
-
-### Maximum coverage
-
-- Cross every alternative / tail / method / correction switch the references
-  cross, in combination, not just the default.
-- Cover the edges: n = 0 and 1, empty and single-element input, identical
-  values, ties, zero variance, zero cells, exact boundaries, underflow and
-  overflow, `NaN`/`Inf`, every `NA` mode.
-- Cover the Perl surface: each call form (hashref, arrayref, named
-  arguments), each documented return field, every `croak` and validation
-  path, and leak checks where sibling tests have them.
-- Choose a tolerance per quantity, justified in a comment against the worst
-  observed disagreement, with headroom for long-double and quadmath. Never
-  widen one to make a failure go away.
-- Gate genuinely slow cases behind `EXTENDED_TESTING`/`AUTHOR_TESTING`
-  rather than dropping them.
-
-When the XS and a reference disagree, do not silently pick a winner: get a
-third opinion from `mpmath` at `mp.dps = 60`, solving the *defining* equation
-by bisection rather than calling a library inverse, and record any remaining
-divergence in the test file so changing it later is deliberate.
+Tests for any function with an R or Python equivalent come from those
+projects' own test suites, frozen as literals. The full rules (sources,
+freezing, coverage, tolerances) are in `.claude/rules/tests.md`, which loads
+when you work on files under `t/`; read it before writing a test.
 
 ## Every change must hold across the whole support matrix
 
@@ -199,18 +143,11 @@ and perl 5.10.
 ### Installed perls
 
 `./test.all.perls.pl` builds and tests against every perlbrew perl (`-p` for
-a subset); run it for anything touching `LikeR.xs`. Under
-`/home/con/perl5/perlbrew/perls/`:
-
-| perl | NV | notes |
-|---|---|---|
-| `perl-5.44.0` (default), `perl-5.42.3`, `perl-5.32.1`, `perl-5.10.1` | `double`, NVgf `"g"` | 5.42.3 is threaded; 5.32.1 is there for its release's own bugs |
-| `perl-5.12.5` | `long double`, `"Lg"` | archname `x86_64-linux-ld` |
-| `5.44.0-quadmath` | `__float128`, `"Qg"` | |
-| `5.44.0-i686` | `double` | 32-bit, `ivsize=4`: `IV_MAX` 2147483647; listed as `double/iv4` |
-| `5.44.0-i686-64int` | `double` | 32-bit, `ivsize=8`, `ptrsize=4` (CPAN's `i686-linux-64int`); listed as `double/iv8p4` |
-| `5.16.3-thr-ld` | `long double` | `useithreads`, `usemultiplicity`, `USE_REENTRANT_API`; the only threaded perl older than 5.20 |
-| `5.44.0-debug` | `double` | `-DDEBUGGING`: perl's internal `assert()`s are live (see below) |
+a subset); run it for anything touching `LikeR.xs`. `--list` prints the
+matrix with each perl's NV and IV width. Three perls are there for one
+reason each: `perl-5.32.1` for that release's own bugs, `5.16.3-thr-ld` as
+the only threaded perl older than 5.20, and `5.44.0-debug` for perl's
+internal `assert()`s (see below).
 
 As a fast check, compile-check all three NV widths without reconfiguring the
 tree (which would clobber the `Makefile`) by generating the `.c` and compiling
@@ -227,10 +164,9 @@ the `\s`/`\w` inversion lists of every pattern compiled at run time, and
   more than once per name. Compile it once into a `qr//` in a lexical cache,
   evaluated only on a cache miss (which also keeps the 5.10.0 `pp_qr()` leak
   below out of the warmed check).
-- `./test.all.perls.pl --list` (and a full run) names every stable series
-  from 5.10 on with no perl in the matrix. When a smoker fails on one,
-  install that series' last release under perlbrew, run `--deps` once, and
-  reproduce there before changing anything.
+- When a smoker fails on a series with no perl here, add one and reproduce
+  there before changing anything; `./test.all.perls.pl --list` names the
+  missing series and prints how to install one.
 
 ### A DEBUGGING perl asserts what a normal one allows
 
@@ -270,17 +206,9 @@ with the old gate.
 
 Such a perl cannot be configured on x86-64 (Configure takes `ivsize` from
 `longsize` and refuses `ivsize < ptrsize`); it must be a real 32-bit build,
-whose recipe `./test.all.perls.pl` prints when the matrix lacks one. Two
-traps when rebuilding:
-
-- `hints/linux.sh` probes `-print-search-dirs` with a hardcoded
-  `/usr/bin/gcc`, and `-m32` lives in `$cc`, so the probe returns x86-64
-  library dirs. `-Dlibpth` cannot fix it (Configure re-appends `$plibpth` and
-  `$glibpth`); `-Dplibpth` is the override that hints file documents.
-- `gcc-multilib` supplies 32-bit glibc (`/usr/lib32`) and nothing more; of
-  `libswanted` only `crypt` is then missing, so
-  `-Dlibswanted='pthread dl m util c'` avoids `libcrypt-dev:i386`, costing
-  only the `crypt()` builtin, which this module never calls.
+whose recipe `./test.all.perls.pl` prints when the matrix lacks one. The
+comment above that recipe in the script explains its two non-obvious flags
+(`-Dplibpth`, `-Dlibswanted`).
 
 ### A size_t is not always as wide as an IV
 

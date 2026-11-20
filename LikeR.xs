@@ -7358,6 +7358,7 @@ typedef struct {
 	WtXlsx *xlsx; // .xlsx: every record rendered into the streamed worksheet
 	const char *sep;
 	STRLEN sep_len;
+	SV *text; // delimited only: one field's Latin-1 bytes as UTF-8; see print_string_row()
 } WtSink;
 
 /*Does a delimited field need quotes?  It does for a quote, a line break or the
@@ -7410,8 +7411,21 @@ static bool wt_needs_quotes(const char *restrict f, STRLEN len, size_t i, size_t
 
 /*Emit one record.  Every field is a byte string with an explicit length, so a
 cell holding a NUL is written whole: it used to pass through strlen(), and
-"x\0y" came out as x.  Delimited text writes the bytes raw, as csv.writer and
-pandas' to_csv() do, and quotes a field only where wt_needs_quotes() says.
+"x\0y" came out as x.  Delimited text is written as UTF-8, quoting a field only
+where wt_needs_quotes() says.
+
+A field's bytes are written as they stand when they are valid UTF-8, and read
+as Latin-1 and encoded when they are not, the reading the .xlsx and LaTeX
+writers give them.  A string with the UTF-8 flag on is valid UTF-8 already, and
+so is every byte string read_table() returns from a UTF-8 file, which is
+written back unchanged.  What changes is a string perl holds as Latin-1 bytes:
+"caf\xe9" -- the same string as "café", whose copy with the flag on was
+written as C3 A9 -- was written as the single byte E9, which no UTF-8 reader
+reads (Python's csv, pandas and R all gave "caf\x{FFFD}";
+t/write_table.oracle.R.python.t).  Up to 0.3425 every field was written as
+the bytes it was stored in.  The conversion comes before the quoting test,
+since a separator such as "§" is two bytes of UTF-8 that only the encoded
+field holds.
 
 A quoted field is written a run at a time between the quotes it doubles
 rather than one PerlIO_putc() per byte.  Writing each record into one buffer
@@ -7424,6 +7438,23 @@ the row end is written here: CR LF where perl is a CRLF shop (PERLIO_USING_CRLF,
 Windows), as the :crlf layer used to make it, LF elsewhere.  Up to 0.3417 the
 handle was text-mode, and :crlf also turned an LF inside a quoted field into
 CR LF, so "1\r\n2" reached a Windows file as "1\r\r\n2".*/
+/*Does [s, s + n) hold a byte past ASCII?  Eight bytes at a time, through
+memcpy() so that no alignment is assumed.  Writing a 200000 x 20 AoH of short
+ASCII strings and numbers took 0.412 to 0.419 s with this check and 0.404 to
+0.414 s without it (best of 7, three rounds, a fresh perl each, 2026-11-20); a
+byte-at-a-time loop over every field, numbers included, cost about 8%.*/
+static bool wt_any_high(const char *restrict s, STRLEN n) {
+	STRLEN k = 0;
+	for (; k + 8 <= n; k += 8) {
+		uint64_t w;
+		memcpy(&w, s + k, 8);
+		if (w & (uint64_t)0x8080808080808080ULL) return TRUE;
+	}
+	for (; k < n; k++)
+		if ((U8)s[k] >= 0x80) return TRUE;
+	return 0;
+}
+
 #ifdef PERLIO_USING_CRLF
 #  define WT_EOL "\r\n"
 #else
@@ -7439,7 +7470,14 @@ static void print_string_row(pTHX_ WtSink *restrict S, const WtRow *restrict R){
 	for (size_t i = 0; i < n; i++) {
 		if (i && sep_len) PerlIO_write(fh, sep, sep_len);
 		const char *f = R->f[i] ? R->f[i] : "";
-		const STRLEN len = R->f[i] ? R->len[i] : 0;
+		STRLEN len = R->f[i] ? R->len[i] : 0;
+		if (!R->num[i] && wt_any_high(f, len) // a number's text is perl's, and ASCII
+				&& !is_utf8_string((const U8*)f, len)) {
+			sv_setpvn(S->text, f, len);
+			SvUTF8_off(S->text); // sv_setpvn() keeps whatever the last field left
+			sv_utf8_upgrade(S->text);
+			f = SvPV(S->text, len);
+		}
 		if (!wt_needs_quotes(f, len, i, n, sep, sep_len)) {
 			if (len) PerlIO_write(fh, f, len); //undef/empty -> print nothing
 			continue;
@@ -17496,43 +17534,29 @@ typedef struct {
 	size_t maxc; //one past the widest column holding a cell with a value, this row
 	size_t next; //one past the widest column any <c> names, this row
 	AV       *row; //pass 2's row buffer, reused between rows
+	AV       *held; //the row being read, set aside while the blank rows before it go out; see xlsx_ws_blank_rows()
+	size_t rnum; //the number of the row being read: its r=, or one past the row before; 0 before the first
+	size_t last; //the number of the last row emitted with a value; 0 = none yet, so the header is still to come
 	csv_plan *plan;
 	SV       *callback;
 	HV       *plan_hv; //the plan hash, until the callback has filled it in
 	bool     in_row, any; //the current row has at least one non-empty cell
 } xlsx_ws;
 
-/*Hand one finished row on: to the plan's fast path once read_table has filled
+/*Hand the row in w->row on: to the plan's fast path once read_table has filled
 the plan in, and to the perl callback until then (which is how the header gets
 read).
 
 The row is padded to the sheet's width, because a caller reads by index.  Its
 gaps are filled with empty strings for the perl callback and a filter, which
 have always been handed '' there, and otherwise with undef for S_fast_row(),
-which is what it makes of them.  A row with nothing but empty cells is dropped, as _parse_csv_file()
-drops a blank line.
+which is what it makes of them.  An empty w->row is a blank row, all gaps.
 
 Ownership on the callback path matches S_emit_row(): the AV's single reference
 becomes a mortal RV before the call, so a die inside the callback releases it on
 the unwind, and w->row is cleared first so the unwind cannot reach it twice.*/
-static void xlsx_ws_row_end(pTHX_ xlsx_ws *restrict w, bool measure){
+static void xlsx_ws_emit(pTHX_ xlsx_ws *restrict w){
 	SV **ary;
-	w->next = 0;
-	if (measure) {
-		if (w->maxc > w->gmax) w->gmax = w->maxc;
-		w->maxc = 0;
-		return;
-	}
-	if (!w->any) { //blank row: free what it holds and reuse the buffer
-		ary = AvARRAY(w->row);
-		for (SSize_t j = 0; j <= AvFILLp(w->row); j++) {
-			if (!XLSX_IS_HOLE(ary[j])) SvREFCNT_dec(ary[j]);
-			ary[j] = NULL;
-		}
-		AvFILLp(w->row) = -1;
-		w->maxc = 0;
-		return;
-	}
 	if ((SSize_t)(w->width - 1) > AvFILLp(w->row)) {
 		const SSize_t from = AvFILLp(w->row) + 1;
 		av_extend(w->row, (SSize_t)(w->width - 1));
@@ -17577,6 +17601,78 @@ looked at once per row until it does -- twice in practice -- and never again.*/
 		S_plan_init(aTHX_ w->plan, w->plan_hv);
 		w->plan_hv = NULL;
 	}
+}
+
+/*Emit n blank rows ahead of the row being read, which waits in w->held: a
+croak from S_fast_row() or a die in the callback leaves it there, and
+S_xlsx_ws_free() releases it.*/
+static void xlsx_ws_blank_rows(pTHX_ xlsx_ws *restrict w, size_t n){
+	w->held = w->row;
+	w->row  = newAV();
+	av_extend(w->row, (SSize_t)(w->width - 1));
+	for (size_t k = 0; k < n; k++)
+		xlsx_ws_emit(aTHX_ w); //leaves w->row an empty AV for the next one
+	SvREFCNT_dec((SV*)w->row);
+	w->row  = w->held;
+	w->held = NULL;
+}
+
+/*A </row>, or what stands for one.  Pass 1 only takes the row's width.
+
+Pass 2 emits a row with a value, and before it a blank row for every row
+number it skips past the last row emitted, so a row that is empty -- written
+<row r="3"></row>, as write_table() writes a row of empty cells, or <row
+r="3"/>, or holding only formatted blanks -- or missing from the XML altogether,
+as Excel leaves an empty row out, reads as a row of undef.  That is pandas'
+reading (pandas/io/excel/_openpyxl.py, get_sheet_data(), with
+skip_blank_lines=False: GH 39808): rows before the first one with a value are
+not there, that row is the header, and rows past the last one with a value are
+not there either, since they are only ever emitted ahead of a later row.  Up to
+0.3425 every row with no value was dropped, and a table written with
+write_table() lost a row of undef on the way back.
+
+The cost of a gap is a row of 'width' cells for each row number it skips, so
+a file of two cells, XFD1 and A1048576, asks for 16384 x 1048575 of them, as
+it does of openpyxl and pandas.*/
+static void xlsx_ws_row_end(pTHX_ xlsx_ws *restrict w, bool measure){
+	w->next = 0;
+	if (measure) {
+		if (w->maxc > w->gmax) w->gmax = w->maxc;
+		w->maxc = 0;
+		return;
+	}
+	if (!w->any) { //blank: free what it holds and reuse the buffer; emitted only if a row with a value follows
+		SV **ary = AvARRAY(w->row);
+		for (SSize_t j = 0; j <= AvFILLp(w->row); j++) {
+			if (!XLSX_IS_HOLE(ary[j])) SvREFCNT_dec(ary[j]);
+			ary[j] = NULL;
+		}
+		AvFILLp(w->row) = -1;
+		w->maxc = 0;
+		return;
+	}
+/*A hash of hashes keys each row by its first column, which a blank row does not
+have, and read_table() refuses an undefined row name.  So a blank row is still
+left out of one, as it was up to 0.3425, rather than making every sheet with a
+spacer row unreadable as a hash of hashes; a CSV record of empty fields, which
+is a row and not a blank line, is refused there.*/
+	if (w->last && w->rnum > w->last + 1 && !(w->plan->active && w->plan->mode == 2))
+		xlsx_ws_blank_rows(aTHX_ w, w->rnum - w->last - 1);
+	w->last = w->rnum;
+	xlsx_ws_emit(aTHX_ w);
+}
+
+/*The number a <row> gives itself in r=: 1 to XLSX_MAX_ROWS, or 0 when it has
+none or one that is not a row number.*/
+static size_t xlsx_row_number(const char *restrict s, STRLEN n){
+	size_t r = 0;
+	if (!s || !n) return 0;
+	for (STRLEN k = 0; k < n; k++) {
+		if (s[k] < '0' || s[k] > '9') return 0;
+		r = r * 10 + (size_t)(s[k] - '0');
+		if (r > XLSX_MAX_ROWS) return 0;
+	}
+	return r;
 }
 
 /*Is the text of [s, s + n) valid UTF-8 with at least one non-ASCII character?
@@ -17735,6 +17831,8 @@ static void xlsx_ws_scan(pTHX_ xlsx_ws *restrict w, bool measure){
 	w->next   = 0;
 	w->any    = 0;
 	w->in_row = 0;
+	w->rnum   = 0;
+	w->last   = 0;
 	while (p < end) {
 		const char *lt = (const char*)memchr(p, '<', (size_t)(end - p));
 		const char *a;
@@ -17764,7 +17862,16 @@ closing the old one first is the only sane reading of it if it does.*/
 			if (w->in_row) xlsx_ws_row_end(aTHX_ w, measure);
 			p = xlsx_tag_end(p + plen + 3, end, &a, &alen, &self);
 			w->in_row = 1;
-			if (self) { //<row r="7"/>: an empty row, and so dropped
+/*Rows are read in the order they come, and r= only says how many blank rows
+lie before this one.  A row with no r=, or one that is not past the row
+before -- which only malformed XML has -- is the next row.*/
+			{
+				STRLEN rlen;
+				const char *rv = xlsx_attr(a, alen, "r", 1, &rlen);
+				const size_t r = xlsx_row_number(rv, rlen);
+				w->rnum = r > w->rnum ? r : w->rnum + 1;
+			}
+			if (self) { //<row r="7"/>: an empty row, emitted only if a row with a value follows
 				xlsx_ws_row_end(aTHX_ w, measure);
 				w->in_row = 0;
 			}
@@ -17857,6 +17964,7 @@ the callback holds it -- so this frees it once or not at all.*/
 static void S_xlsx_ws_free(pTHX_ void *v){
 	xlsx_ws *w = (xlsx_ws*)v;
 	SvREFCNT_dec((SV*)w->row);
+	SvREFCNT_dec((SV*)w->held); //the row xlsx_ws_blank_rows() set aside, when it was cut short
 	Safefree(w);
 }
 
@@ -34100,6 +34208,7 @@ PPCODE:
 	WtSink S;
 	S.fh = NULL; S.tex = NULL; S.xlsx = NULL;
 	S.sep = sep; S.sep_len = sep_len;
+	S.text = NULL;
 	WtXlsx X;
 /* With 'tex' on, the records are written as they arrive (see WtTex); the file
   is opened when the header does. */
@@ -34133,6 +34242,7 @@ PPCODE:
 		if (!fh) wt_open_failed(aTHX_ file);
 		*fhp = fh;
 		S.fh = fh;
+		S.text = sv_2mortal(newSVpvs(""));
 	}
 /* Compressed output goes through a PerlIO::via layer, with a :perlio buffer
   above it so the layer's perl method is called per 8 KB and not per field.

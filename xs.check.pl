@@ -106,6 +106,14 @@ my %svpv_audited = (
 	'const char *key = SvPV(arg, klen);'               => 'mode(): the hash length after it carries SvUTF8',
 	'const char*key = SvPV(arg2, klen);'               => 'value_counts(): the hash length after it carries SvUTF8',
 	'const char *kp = SvPV(sv, l);'                    => 'fr_key_init(): klen, set from SvUTF8 on the next lines, is what reaches the hash',
+	# write_table() fields: since 0.3426 every sink (print_string_row(),
+	# wt_xlsx_row(), wt_tex_row()) writes a field's bytes as they stand when
+	# they are valid UTF-8 and reads them as Latin-1 when not, so a string held
+	# as bytes and its upgraded copy are written alike (the maintainer's
+	# decision of 2026-11-20 on the question open since 2026-10-03)
+	'const char *hs = h ? SvPV(h, hl) : "";'           => 'write_table(): a header field, written by the UTF-8-or-Latin-1 rule above',
+	'const char *ks = SvPV(row_key_sv, key_len);'      => 'write_table(): a HoH row key, written by the UTF-8-or-Latin-1 rule above',
+	'if (SvOK(val)) undef_val = SvPV(val, undef_len);' => 'write_table(): undef_val, a field written by the UTF-8-or-Latin-1 rule above',
 );
 
 my @report;

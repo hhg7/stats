@@ -14,7 +14,8 @@ use Stats::LikeR 'read_table';
 # well-formed workbook never exercises:
 #
 #   * a cell with no r= at all, and an r= that is not the first attribute
-#   * self-closing <c/> and <row/>, blank rows, and gaps mid-row
+#   * self-closing <c/> and <row/>, blank rows (rows of undef since 0.3426),
+#     and gaps mid-row
 #   * every entity form _xml_unescape used to handle, decimal and hex numeric
 #     character references included, and the ones that must NOT be decoded
 #   * sheet names, which _xml_unescape decodes through the same single pass
@@ -163,8 +164,12 @@ sub mk {
 	         . '<row r="4"/>'
 	         . '<row r="5"><c r="A5"/><c r="B5"><v>5</v></c><c r="C5"><v>6</v></c></row>',
 	           '<si><t>a</t></si><si><t>b</t></si><si><t>c</t></si>');
+	# rows 3 and 4 have no value: each is a row of undef, as pandas reads them
+	# (t/read_table.xlsx.blank_rows.pandas.t); up to 0.3425 both were dropped
 	is_deeply( read_table($f),
 		[ { a => '1',   b => undef, c => '3' },
+		  { a => undef, b => undef, c => undef },
+		  { a => undef, b => undef, c => undef },
 		  { a => undef, b => '5',   c => '6' } ],
 		'self-closing cell/row, blank rows and a mid-row gap' );
 }
@@ -175,8 +180,8 @@ sub mk {
 	         . '<row r="2"/>'
 	         . '<row r="3"><c r="A3"><v>1</v></c><c r="B3"><v>2</v></c></row>',
 	           '<si><t>a</t></si><si><t>b</t></si>');
-	is_deeply( read_table($f), [ { a => '1', b => '2' } ],
-		'an empty <row/> between data rows is dropped, not merged' );
+	is_deeply( read_table($f), [ { a => undef, b => undef }, { a => '1', b => '2' } ],
+		'an empty <row/> between data rows is a row of undef, not merged with the next' );
 }
 
 # entity decoding, in inline strings and in shared strings
@@ -564,11 +569,12 @@ sub inline_rows {
 	         . '<row r="2"><c r="A2"><v>1</v></c><c r="B2" s="3"></c><c r="C2"><v>3</v></c></row>');
 	is_deeply( read_table($g), [ { a => 1, b => undef, c => 3 } ],
 		'an empty open cell between values is an undef' );
-	# a row of nothing but empty open cells is a blank row, and dropped
+	# a row of nothing but empty open cells is a blank row: a row of undef, and
+	# no wider than the sheet
 	my $b = mk('<row r="1"><c r="A1" t="inlineStr"><is><t>a</t></is></c></row>'
 	         . '<row r="2"><c r="A2" s="1"></c><c r="B2"><v></v></c></row>'
 	         . '<row r="3"><c r="A3"><v>9</v></c></row>');
-	is_deeply( read_table($b), [ { a => 9 } ], 'a row of empty open cells is dropped' );
+	is_deeply( read_table($b), [ { a => undef }, { a => 9 } ], 'a row of empty open cells is a row of undef' );
 }
 
 # 'sheet' takes a name before a number. A workbook read whole comes back keyed

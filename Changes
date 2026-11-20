@@ -26,6 +26,40 @@ Revision history for Stats-LikeR
    warn() of the characters themselves would warn "Wide character", which
    the module's fatal warnings make an error.
 
+ [Behavior change: blank rows of an .xlsx]
+
+ - read_table() now reads a row with no value that lies between an
+   .xlsx's header and its last row with a value as a row of undef, as
+   pandas' read_excel() reads it (GH 39808), where it dropped it. That
+   holds for a row written empty, <row r="3"/> or <row r="3"></row> as
+   write_table() writes a row of empty cells, for one holding only
+   formatted empty cells, and for one missing from the XML, as Excel
+   leaves an empty row out: a row's r= now says how many blank rows lie
+   before it. A table write_table() wrote with a row of undef in it lost
+   that row on the way back. Rows past the last value are still not
+   read, as pandas does not read them (Excel records formatted rows
+   below a table), and the header is still the first row with a value.
+ - With output_type => 'hoh' a blank row is still left out: it has no
+   row name, and an undefined one is refused, which would have made any
+   sheet with a spacer row unreadable as a hash of hashes.
+
+ [Behavior change: write_table() writes delimited text as UTF-8]
+
+ - A field perl holds as bytes that are not valid UTF-8 is now read as
+   Latin-1 and written as UTF-8, as the .xlsx and LaTeX writers already
+   wrote it. "caf\xe9" and "café" are the same string to perl, but the
+   first was written as the single byte E9, which Python's csv, pandas and
+   R all read as "caf\x{FFFD}", and the second as C3 A9. Both are now
+   written C3 A9. Text with the UTF-8 flag on, and bytes that are valid
+   UTF-8, such as the fields read_table() returns from a UTF-8 file, are
+   written as before, so reading a UTF-8 file and writing it back still
+   gives the same bytes; a Latin-1 file read and written back comes out
+   as UTF-8. Writing a 200000 x 20 table is about 2% slower.
+ - A lone surrogate, which only broken data holds, is still written
+   rather than refused: as perl's three bytes for it in a delimited file,
+   and as _xD800_ in an .xlsx, which LibreOffice shows as an empty cell.
+   README.md now says so, where it said LibreOffice decodes every escape.
+
  [write_table() to an .xlsx]
 
  - A string was written as a number cell, and so shown as another text,
@@ -192,6 +226,25 @@ Revision history for Stats-LikeR
    scraping module names from Makefile.PL, which checked each with
    -MModule and so ignored minimum versions: a fresh 5.10 perl, with core
    Scalar::Util 1.21, passed it against PREREQ_PM's 1.22.
+ - t/read_write_table.roundtrip.t writes 63 awkward strings, each held
+   four ways (as written, with and without the UTF-8 flag, and after
+   numeric use), and 15 numbers, to csv, tsv, .xlsx, .gz, .bz2 and four
+   other separators, in every frame shape, and reads them back; column
+   names, row names, undef_val and blank rows too. A round trip is what
+   no R or pandas test can check, since their strings are never bytes
+   and never also numbers. It found the dropped .xlsx blank row above.
+ - t/write_table.oracle.R.python.t freezes what openpyxl 3.1.5,
+   LibreOffice 24.2.7.2, Python's csv, pandas 3.0.4 and R 4.6.2 read from
+   write_table()'s output for 60 cases, and requires write_table() to
+   write the same bytes again, so a mistake the writer and read_table()
+   share, as 0.3425's "6.10" number cells were, fails it. Every reading
+   that differs from what was written is explained in the file. The
+   generator is t/write_table.oracle.R.python.py.
+ - t/read_table.xlsx.blank_rows.pandas.t takes the blank-row cases of
+   pandas' Excel tests (GH 39808, 39181, 39547, 40442), rebuilding the
+   workbooks pandas' wheel does not ship in each way a blank row is
+   written; t/read_table.xlsx.blank_rows.pandas.py checks that pandas
+   reads them so.
 
 0.3425 2026-11-18 CST (Claude Opus 5.5 helped)
 

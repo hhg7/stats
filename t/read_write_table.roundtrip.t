@@ -19,13 +19,17 @@
 # What comes back, by the POD:
 #   - an empty string reads back as undef, in every format: an empty field is
 #     missing, and an empty .xlsx cell is not written at all;
-#   - a delimited file is read as bytes and its fields come back as bytes, so
-#     a value comes back as the bytes perl stores it in: a string with the
-#     UTF-8 flag on comes back UTF-8 encoded, "αβ" as 4 bytes;
-#   - an .xlsx is text, and comes back as characters; a string without the
-#     UTF-8 flag is written as UTF-8 when it is valid UTF-8 and read as
-#     Latin-1 when it is not, so undecoded UTF-8 bytes ("caf\xc3\xa9", as
-#     read_table() returns them from a CSV) come back decoded;
+#   - every format is written as UTF-8: a string with the UTF-8 flag on as
+#     the UTF-8 of its characters, and one without it as it stands when it is
+#     valid UTF-8 (as read_table() returns a UTF-8 CSV's fields, which are so
+#     written back unchanged) and as Latin-1 when it is not, so "caf\xe9" and
+#     "café" are both written C3 A9 (since 0.3426 in a delimited file too;
+#     up to 0.3425 that wrote "caf\xe9" as the byte E9);
+#   - a delimited file is read as bytes and its fields come back as those
+#     UTF-8 bytes, "αβ" as 4 bytes; an .xlsx comes back as characters, so
+#     undecoded UTF-8 bytes ("caf\xc3\xa9") come back decoded there;
+#   - a row whose cells are all empty or undef comes back as a row of undef
+#     (an .xlsx one since 0.3426: up to 0.3425 read_table() dropped it);
 #   - a number comes back as perl's own string of it: "$v" (15 significant
 #     digits on a double, as R's write.table writes them, more on a long
 #     double or __float128 perl, so 0.1 + 0.2 is "0.3" and not exact), Inf
@@ -128,10 +132,15 @@ sub want_delim {
 	return undef unless defined $v;
 	my $s = "$v";	# a copy; see @number
 	return undef if $s eq '';
-	{
-		no warnings;	# a surrogate warns as it is encoded
-		utf8::encode($s) if utf8::is_utf8($s);
+	no warnings;	# a surrogate warns as it is encoded
+	if (utf8::is_utf8($s)) {
+		utf8::encode($s);
+		return $s;
 	}
+	my $t = $s;
+	return $s if utf8::decode($t);	# valid UTF-8, ASCII included: as it is
+	utf8::upgrade($s);	# Latin-1
+	utf8::encode($s);
 	return $s;
 }
 sub want_xlsx {
@@ -188,9 +197,7 @@ sub write_read {
 my @col = qw(first mid last);
 for my $fmt (@format) {
 	my ($name, $xlsx) = ($fmt->[0], $fmt->[3]);
-	# An .xlsx row whose cells are all empty is dropped on reading (the TODO
-	# below), so the empty string is left out of the workbook's table.
-	my @rows = grep { !($xlsx && ($_->[2] || "$_->[1]" eq '')) } @row;
+	my @rows = grep { !($xlsx && $_->[2]) } @row;
 	my $want = $xlsx ? \&want_xlsx : \&want_delim;
 	my %shape = (
 		aoh => [ [ map { my $v = $_->[1]; +{ first => $v, mid => $v, last => $v } } @rows ],
@@ -287,21 +294,29 @@ for my $fmt (@format) {
 # one column, since a blank line is skipped).  write_table() writes it to an
 # .xlsx as <row r="3"></row>, which openpyxl 3.1.5 and pandas 3.0.4 read as a
 # row of None/NaN (pandas: test_one_col_noskip_blank_line, GH 39808, in
-# tests/io/excel/test_readers.py); read_table() leaves it out, by a rule that
-# t/read_table.xlsx.xml.t and t/read_table.xlsx.parser.t pin.
+# tests/io/excel/test_readers.py), and read_table() too since 0.3426.  A
+# trailing one is not kept, by pandas' rule, which a delimited file shares
+# only for a blank line.
 for my $fmt (@format) {
 	for my $empty ('', undef) {
 		my @data = ({ a => 1, b => 2 }, { a => $empty, b => $empty }, { a => 3, b => 4 });
 		my ($got) = write_read(\@data, $fmt, { col_names => [qw(a b)] }, { output_type => 'aoh' });
 		my $want = [ $data[0], { a => undef, b => undef }, $data[2] ];
 		my $what = defined $empty ? 'empty strings' : 'undef';
-		TODO: {
-			local $TODO = 'read_table() drops an .xlsx row with no values, which write_table() '
-				. 'writes as <row r="N"></row>; the maintainer has not decided whether to keep it'
-				if $fmt->[3];
-			is_deeply($got, $want, "$fmt->[0]: a row of $what reads back as a row of undef");
-		}
+		is_deeply($got, $want, "$fmt->[0]: a row of $what reads back as a row of undef");
 	}
+}
+
+# A last row of undef is kept by a delimited file and left out of an .xlsx,
+# as pandas leaves a sheet's trailing empty rows out (get_sheet_data(), "Trim
+# trailing empty rows", GH 39181, test_read_with_empty_trailing_rows in
+# tests/io/excel/test_openpyxl.py): it cannot be told from the formatted empty
+# rows Excel records below a table.
+for my $fmt (@format) {
+	my @data = ({ a => 1, b => 2 }, { a => undef, b => undef });
+	my ($got) = write_read(\@data, $fmt, { col_names => [qw(a b)] }, { output_type => 'aoh' });
+	is_deeply($got, $fmt->[3] ? [ $data[0] ] : \@data,
+		"$fmt->[0]: a last row of undef is " . ($fmt->[3] ? 'left out, as pandas leaves it out' : 'kept'));
 }
 
 if ($HAVE_LEAKTRACE) {
