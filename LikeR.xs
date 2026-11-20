@@ -1231,7 +1231,7 @@ the compiler has to keep, and it needs the real block to store into.*/
 static bool alloc_probe_ok(pTHX_ size_t bytes) {
 	if (bytes == 0) return TRUE; //malloc(0) may be NULL, and has no byte to write
 	void *probe = malloc(bytes); //not Newx(), which aborts: see above
-	if (!probe) return FALSE;
+	if (!probe) return 0;
 	*(volatile unsigned char *)probe = 0; //keeps the malloc() alive: see above
 	free(probe);
 	return TRUE;
@@ -3079,9 +3079,9 @@ static void ft_net_leaf(ft_net *restrict N) {
 				ft_node_push(N, nd, pv[k].p + ddf, pv[k].q + ddf + lw);
 			N->work += (NV)(ib - ia);
 		}
-		if (N->held > FT_NET_PAST_CAP) N->aborted = TRUE;
+		if (N->held > FT_NET_PAST_CAP) N->aborted = 1;
 	}
-	if (N->work > FT_NET_WORK_CAP) N->aborted = TRUE;
+	if (N->work > FT_NET_WORK_CAP) N->aborted = 1;
 }
 
 /*Place column es below node em, row by row from row i with rem still to
@@ -3148,7 +3148,7 @@ static NV fisher_rxc_pvalue(pTHX_ const int64_t *restrict cells, unsigned nrow, 
 	runs to log(N! / prod R_i!), which passes 709 by N = 1000.*/
 	N.K = -FT_LF(&N, tot);
 	for (size_t i = 0; i < N.r; i++) N.K += FT_LF(&N, N.R[i]);
-	N.p_total = 0.0; N.work = 0.0; N.held = 0; N.aborted = FALSE;
+	N.p_total = 0.0; N.work = 0.0; N.held = 0; N.aborted = 0;
 	Newx(N.rem_suffix, N.r + 1, int64_t);
 	Newx(N.x, N.r, int64_t);
 	Newx(N.d, N.r, int64_t);
@@ -3448,8 +3448,8 @@ static SV **formula_hv_fetch(pTHX_ HV *restrict hv, const char *restrict name) {
 	const STRLEN len = strlen(name);
 	SV **e = hv_fetch(hv, name, (I32)len, 0);
 	if (e) return e;
-	bool high = FALSE;
-	for (const char *c = name; *c; c++) if ((unsigned char)*c >= 0x80) { high = TRUE; break; }
+	bool high = 0;
+	for (const char *c = name; *c; c++) if ((unsigned char)*c >= 0x80) { high = 1; break; }
 	if (high && is_utf8_string((const U8*)name, len)) e = hv_fetch(hv, name, -(I32)len, 0);
 	return e;
 }
@@ -3460,7 +3460,7 @@ static bool formula_hv_exists(pTHX_ HV *restrict hv, const char *restrict name) 
 	for (const char *c = name; *c; c++)
 		if ((unsigned char)*c >= 0x80)
 			return is_utf8_string((const U8*)name, len) ? cBOOL(hv_exists(hv, name, -(I32)len)) : FALSE;
-	return FALSE;
+	return 0;
 }
 
 // Internal extractor resolving single data values. Returns NaN on missing or non-numeric.
@@ -3769,11 +3769,11 @@ row or column is FETCHed once and read with the _nomg form after: tested
 before its magic ran, every tied cell read as undef and the row was dropped
 without a word.*/
 static bool pc_num(pTHX_ SV *cell, NV *restrict out) {
-	if (!cell) return FALSE; // no restrict on cell: perl-managed, a proxy for a tied element
+	if (!cell) return 0; // no restrict on cell: perl-managed, a proxy for a tied element
 	SvGETMAGIC(cell);
-	if (!SvOK(cell) || !sv_lln_nomg(aTHX_ cell)) return FALSE;
+	if (!SvOK(cell) || !sv_lln_nomg(aTHX_ cell)) return 0;
 	const NV v = SvNV_nomg(cell);
-	if (!nv_isfinite(v)) return FALSE;
+	if (!nv_isfinite(v)) return 0;
 	*out = v;
 	return TRUE;
 }
@@ -3886,12 +3886,12 @@ static NV lm_expr_atom(pTHX_ const char **restrict pp, HV *data_hoa, HV **row_ha
 	if (*p == '(') {
 		p++;
 		NV v = lm_expr(aTHX_ &p, data_hoa, row_hashes, i, dry, bad, depth + 1);
-		if (*bad || *p != ')') { *bad = TRUE; return NV_NAN; }
+		if (*bad || *p != ')') { *bad = 1; return NV_NAN; }
 		*pp = p + 1;
 		return v;
 	}
 	size_t len = lm_expr_runlen(p);
-	if (len == 0) { *bad = TRUE; return NV_NAN; }
+	if (len == 0) { *bad = 1; return NV_NAN; }
 	/*1e-3: the sign belongs to the exponent, so the run is extended through it
 	when everything before the 'e' is a mantissa.*/
 	if ((*p >= '0' && *p <= '9') || *p == '.') {
@@ -3911,10 +3911,10 @@ static NV lm_expr_atom(pTHX_ const char **restrict pp, HV *data_hoa, HV **row_ha
 		short int f = -1; // index into fn[], -1 = not a function this reads
 		for (unsigned short k = 0; k < sizeof fn / sizeof fn[0]; k++)
 			if (len == fn[k].len && strncmp(p, fn[k].name, len) == 0) { f = (short int)k; break; }
-		if (f < 0) { *bad = TRUE; return NV_NAN; }
+		if (f < 0) { *bad = 1; return NV_NAN; }
 		p += len + 1;
 		NV v = lm_expr(aTHX_ &p, data_hoa, row_hashes, i, dry, bad, depth + 1);
-		if (*bad || *p != ')') { *bad = TRUE; return NV_NAN; }
+		if (*bad || *p != ')') { *bad = 1; return NV_NAN; }
 		*pp = p + 1;
 		if (f == 7 || nv_isnan(v)) return v; // I() is the identity
 		switch (f) {
@@ -3955,7 +3955,7 @@ static NV lm_expr_atom(pTHX_ const char **restrict pp, HV *data_hoa, HV **row_ha
 static NV lm_expr_unary(pTHX_ const char **restrict pp, HV *data_hoa, HV **row_hashes,
 	unsigned i, bool dry, bool *restrict bad, unsigned short depth)
 {
-	if (depth > 64) { *bad = TRUE; return NV_NAN; }
+	if (depth > 64) { *bad = 1; return NV_NAN; }
 	if (**pp == '-' || **pp == '+') {
 		const bool neg = (**pp == '-');
 		(*pp)++;
@@ -4028,7 +4028,7 @@ static NV evaluate_term(pTHX_ HV *data_hoa, HV **row_hashes, unsigned i, const c
 	Safefree(term_cpy);
 	{
 		const char *p = term;
-		bool bad = FALSE;
+		bool bad = 0;
 		NV v = lm_expr(aTHX_ &p, data_hoa, row_hashes, i, FALSE, &bad, 0);
 		return (bad || *p != '\0') ? NV_NAN : v; //lm_formula_terms() has already refused a term that cannot be read
 	}
@@ -4046,17 +4046,17 @@ static bool lm_term_readable(pTHX_ const char *restrict term) {
 	const char *comp[16];
 	size_t len[16];
 	const unsigned nc = lm_split_term(term, comp, len, 16);
-	if (nc > 16) return FALSE;
+	if (nc > 16) return 0;
 	for (unsigned c = 0; c < nc; c++) {
 		if (memchr(comp[c], '(', len[c]) == NULL) continue;
-		if (comp[c][0] == '(') return FALSE;
+		if (comp[c][0] == '(') return 0;
 		char *cc = savepvn(comp[c], len[c]);
 		const char *p = cc;
-		bool bad = FALSE;
+		bool bad = 0;
 		(void)lm_expr(aTHX_ &p, NULL, NULL, 0, TRUE, &bad, 0);
 		const bool ok = !bad && *p == '\0';
 		Safefree(cc);
-		if (!ok) return FALSE;
+		if (!ok) return 0;
 	}
 	return TRUE;
 }
@@ -4283,7 +4283,7 @@ static LmDesign *lm_design_build(pTHX_ HV *data_hoa, HV **row_hashes, size_t n,
 		for (i = 0; i < num_uniq; i++) {
 			unsigned nc;
 			if (uniq_terms[i][0] == LM_VAR_DECL) { // a variable named ahead of the terms: see LM_VAR_DECL
-				bool found = FALSE;
+				bool found = 0;
 				for (j = 0; j < d->nvar && !found; j++)
 					found = strEQ(d->var[j], uniq_terms[i] + 1);
 				if (!found) d->var[d->nvar++] = savepv(uniq_terms[i] + 1);
@@ -4436,9 +4436,9 @@ static LmDesign *lm_design_build(pTHX_ HV *data_hoa, HV **row_hashes, size_t n,
 	and A:V got dummy coding where R gives contrasts (R 4.6.1 tests/reg-tests-2.R
 	line 707, the case 1.5.1 got wrong).*/
 				for (k = 0; k < t && !present; k++) {
-					bool inside = TRUE;
+					bool inside = 1;
 					for (i = 0; i < nwords; i++)
-						if (margin[i] & ~tmask[(size_t)k * nwords + i]) { inside = FALSE; break; }
+						if (margin[i] & ~tmask[(size_t)k * nwords + i]) { inside = 0; break; }
 					present = inside;
 				}
 			}
@@ -5333,7 +5333,7 @@ either -- and 'kendall' 0.6.*/
 static bool nv_any_nan(const NV *restrict a, size_t n) {
 	for (size_t i = 0; i < n; i++)
 		if (nv_isnan(a[i])) return TRUE;
-	return FALSE;
+	return 0;
 }
 static NV compute_cor_code(NV *restrict x, NV *restrict y, size_t n, short int meth) {
 	if (meth != COR_PEARSON && (nv_any_nan(x, n) || nv_any_nan(y, n)))
@@ -5945,17 +5945,17 @@ static NV incbeta_xy_core(NV a, NV b, NV x, NV y, bool give_log) {
 			const NV a0 = swp ? b : a, b0 = swp ? a : b, x0 = swp ? y : x, y0 = swp ? x : y;
 			bool w_lower; //TRUE when w is I_x0(a0, b0), FALSE when it is the complement
 			if (b0 <= 1.0) {
-				w = ib_bpser(a0, b0, x0, give_log); w_lower = TRUE;
+				w = ib_bpser(a0, b0, x0, give_log); w_lower = 1;
 			} else if (x0 >= 0.29) {
-				w = ib_bpser(b0, a0, y0, give_log); w_lower = FALSE;
+				w = ib_bpser(b0, a0, y0, give_log); w_lower = 0;
 			} else if ((x0 < 0.1 && nv_pow(x0 * b0, a0) <= 0.7)
 #ifdef LIKER_WIDE_NV
 			        || (b0 <= 15.0 && x0 * b0 <= 1.5) // see toms above
 #endif
 			          ) {
-				w = ib_bpser(a0, b0, x0, give_log); w_lower = TRUE;
+				w = ib_bpser(a0, b0, x0, give_log); w_lower = 1;
 			} else {
-				w = ib_bgrat(b0, a0, y0, x0, NV_EPSILON, give_log); w_lower = FALSE;
+				w = ib_bgrat(b0, a0, y0, x0, NV_EPSILON, give_log); w_lower = 0;
 			}
 			flip = (w_lower == swp); //the caller wants I_x(a, b), which is w for no swap and 1 - w for a swap
 #ifdef LIKER_WIDE_NV
@@ -5967,7 +5967,7 @@ static NV incbeta_xy_core(NV a, NV b, NV x, NV y, bool give_log) {
 			summed directly instead.*/
 			if (flip && (give_log ? w > -M_LN2 : w > 0.5) && (b <= 1.0 || x * b <= 1.5) && x <= 0.97) {
 				w = ib_bpser(a, b, x, give_log);
-				flip = FALSE;
+				flip = 0;
 			}
 #endif
 		}
@@ -6585,7 +6585,7 @@ static void qn_format_vec(const double *restrict x, const bool *restrict ok,
 	for (size_t i = 0; i < n; i++) {
 		if (!ok[i]) continue;
 		int kpower = 0, nsig = 1;
-		bool widens = FALSE;
+		bool widens = 0;
 		if (x[i] != 0.0) {
 			char e[64];
 			snprintf(e, sizeof e, "%.*e", digits - 1, x[i]); //d.dddddde+XX
@@ -6606,7 +6606,7 @@ static void qn_format_vec(const double *restrict x, const bool *restrict ok,
 		if (sleft > mxsl) mxsl = sleft;
 		if (nsig > mxns) mxns = nsig;
 	}
-	bool sci = FALSE;
+	bool sci = 0;
 	int d = 0;
 	if (mxns != INT_MIN) {
 		if (mxl < 0) mxsl = 1;
@@ -6616,7 +6616,7 @@ static void qn_format_vec(const double *restrict x, const bool *restrict ok,
 		const int dE = mxns - 1;
 		const int wE = (dE > 0) + dE + 4 + e;
 		if (wF <= wE) d = rgt;
-		else { sci = TRUE; d = dE; }
+		else { sci = 1; d = dE; }
 	}
 	for (size_t i = 0; i < n; i++) {
 		if (!ok[i]) { out[i][0] = '\0'; continue; }
@@ -7405,7 +7405,7 @@ static bool wt_needs_quotes(const char *restrict f, STRLEN len, size_t i, size_t
 				|| (sep_len && c == sep[0] && len - k >= sep_len && memEQ(f + k, sep, sep_len)))
 			return TRUE;
 	}
-	return FALSE;
+	return 0;
 }
 
 /*Emit one record.  Every field is a byte string with an explicit length, so a
@@ -8708,10 +8708,10 @@ one this writer escapes, and the escape it is written as starts with '_'.  A
 literal "_x0041" followed by a NUL is written "_x0041" "_x0000_", which reads
 "A" "x0000_" unless the first underscore is escaped too.*/
 static bool xlsx_opens_xescape(const char *restrict s, STRLEN rem) {
-	if (rem < 7 || s[0] != '_' || s[1] != 'x') return FALSE;
+	if (rem < 7 || s[0] != '_' || s[1] != 'x') return 0;
 	for (unsigned short int k = 2; k < 6; k++) {
 		const char c = s[k]; // not isXDIGIT(): perl 5.10 can map it to isxdigit(), undefined for a negative char
-		if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))) return FALSE;
+		if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))) return 0;
 	}
 	UV unit; // unused: only whether the character is escaped matters
 	return s[6] == '_' || xlsx_escaped_char(s + 6, rem - 6, &unit) > 0;
@@ -8843,18 +8843,18 @@ static bool xlsx_number_text(const char *restrict s, STRLEN l, bool held) {
 	while (i < l && isDIGIT(s[i])) i++;
 	const STRLEN int_len = i - int_at;
 	STRLEN frac_at = i, frac_len = 0;
-	bool point = FALSE;
+	bool point = 0;
 	if (i < l && s[i] == '.') {
-		point = TRUE;
+		point = 1;
 		frac_at = ++i;
 		while (i < l && isDIGIT(s[i])) i++;
 		frac_len = i - frac_at;
 	}
-	if (int_len + frac_len == 0) return FALSE;
+	if (int_len + frac_len == 0) return 0;
 	IV exp10 = 0; // the exponent written, saturated well past any double's
-	bool has_exp = FALSE;
+	bool has_exp = 0;
 	if (i < l && (s[i] == 'e' || s[i] == 'E')) {
-		has_exp = TRUE;
+		has_exp = 1;
 		i++;
 		bool neg = 0;
 		if (i < l && (s[i] == '+' || s[i] == '-')) neg = s[i++] == '-';
@@ -8863,14 +8863,14 @@ static bool xlsx_number_text(const char *restrict s, STRLEN l, bool held) {
 			if (exp10 < 100000) exp10 = exp10 * 10 + (s[i] - '0'); // 100000: far past +-308, and far from IV_MAX on a 32-bit IV
 			i++;
 		}
-		if (i == exp_at) return FALSE;
+		if (i == exp_at) return 0;
 		if (neg) exp10 = -exp10;
 	}
-	if (i != l) return FALSE;
-	if (!held && int_len > 1 && s[int_at] == '0') return FALSE;
+	if (i != l) return 0;
+	if (!held && int_len > 1 && s[int_at] == '0') return 0;
 	// The rest of a string's rules are about its spelling: see the list above.
 	if (!held && (has_exp || (point && (frac_len == 0 || int_len == 0 || s[frac_at + frac_len - 1] == '0'))))
-		return FALSE;
+		return 0;
 /* The significant digits run from the first non-zero digit to the last digit
  written; lead is the power of ten of the first, before the exponent. */
 	size_t sig = 0;
@@ -8886,7 +8886,7 @@ static bool xlsx_number_text(const char *restrict s, STRLEN l, bool held) {
 		sig++;
 	}
 	if (!sig) return held || !minus; // zero; a string's "-0" is text, since Excel drops the sign
-	if (!held && sig > 15) return FALSE;
+	if (!held && sig > 15) return 0;
 /* Excel's own range: 9.99999999999999E+307 the largest magnitude and
  2.2250738585072E-308 the smallest, so a lead digit at 10^-308 is in range
  only for some mantissas; it is refused outright rather than weighed. */
@@ -10645,13 +10645,13 @@ static NV pgamma_raw(NV x, NV alph, bool lower_tail, bool log_p) {
 	which have no such limit, take the rest. A double build always passes the
 	test, which leaves R's conditions as they were.*/
 #ifdef LIKER_WIDE_NV
-	bool temme_ok = FALSE;
+	bool temme_ok = 0;
 	if (alph > 100.0) { // below it the estimate is not meant to hold (R's own cut-over is 200)
 		const NV z = (x - alph) / nv_sqrt(alph);
 		temme_ok = 1e-3 * nv_pow(alph, (NV)-7.5) * (1.0 + 1e-5 * nv_pow(nv_fabs(z), (NV)14.0)) <= NV_EPSILON * 0.1;
 	}
 #else
-	const bool temme_ok = TRUE;
+	const bool temme_ok = 1;
 #endif
 #ifdef LIKER_WIDE_NV
 	/*For 1 <= x < 3/2 the lower series is summed whatever alph is, where R takes
@@ -11680,11 +11680,11 @@ static void glm_vcov_robust(pTHX_ size_t n, size_t p, const NV *restrict Xs, con
 				of a prefix's tuples, in order of first appearance, carries
 				over to the next fold, so the result is the numbering of the
 				whole tuple in order of first appearance.*/
-				bool first = TRUE;
+				bool first = 1;
 				G = 0;
 				for (unsigned short c = 0; c < ncl; c++) {
 					if (!(mask & (1u << c))) continue;
-					if (first) { memcpy(lab, CLv[c], n * sizeof(size_t)); G = Gv[c]; first = FALSE; }
+					if (first) { memcpy(lab, CLv[c], n * sizeof(size_t)); G = Gv[c]; first = 0; }
 					else G = glm_combine_labels(lab, CLv[c], n, Gv[c], tab, tabmask);
 				}
 			} else {
@@ -13472,7 +13472,7 @@ static void pc_svd(const NV *restrict X, size_t n, size_t p,
 	for (size_t j = 0; j < p; j++) Vc[j * p + j] = 1.0;
 	const NV tol = nv_sqrt((NV)m) * NV_EPSILON;
 	for (unsigned short sweep = 0; sweep < PC_SVD_MAX_SWEEPS; sweep++) {
-		bool rotated = FALSE;
+		bool rotated = 0;
 		for (size_t i = 0; i + 1 < p; i++) {
 			for (size_t j = i + 1; j < p; j++) {
 				NV *restrict ai = A + i * m;
@@ -13484,7 +13484,7 @@ static void pc_svd(const NV *restrict X, size_t n, size_t p,
 					gamma += ai[r] * aj[r];
 				}
 				if (gamma == 0.0 || nv_fabs(gamma) <= tol * nv_sqrt(alpha) * nv_sqrt(beta)) continue;
-				rotated = TRUE;
+				rotated = 1;
 				const NV zeta = (beta - alpha) / (2.0 * gamma);
 				const NV az = nv_fabs(zeta);
 				/*1/(|z| + sqrt(1 + z^2)), and its limit 1/(2|z|) where z^2 would
@@ -13994,8 +13994,8 @@ row instead -- only that row, so a frame of plain numbers never pays for it.
 Called after the cell's get magic has run.*/
 PERL_STATIC_INLINE bool flt_declines(pTHX_ flt_prog *pg, SV *cell) {
 	PERL_UNUSED_CONTEXT;
-	if (!SvAMAGIC(cell)) return FALSE;
-	pg->declined = TRUE;
+	if (!SvAMAGIC(cell)) return 0;
+	pg->declined = 1;
 	return TRUE;
 }
 
@@ -14090,7 +14090,7 @@ static bool flt_eval(pTHX_ flt_prog *pg, const flt_node *nd) {
 /*The root's answer for the cells now in pg->cells: 1 keep, 0 drop, -1 the
 row is the closure's to decide (flt_declines()).*/
 PERL_STATIC_INLINE short int flt_answer(pTHX_ flt_prog *pg) {
-	pg->declined = FALSE;
+	pg->declined = 0;
 	const bool k = flt_eval(aTHX_ pg, &pg->nodes[0]);
 	return pg->declined ? -1 : (k ? 1 : 0);
 }
@@ -14103,9 +14103,9 @@ Only a row with a magical cell pays for it -- a plain frame never enters the
 loop's second half -- and the hold is a mortal reference, dropped with the
 caller's temporaries.*/
 PERL_STATIC_INLINE void flt_hold_cells(pTHX_ flt_prog *pg) {
-	bool magical = FALSE;
+	bool magical = 0;
 	for (size_t s = 0; s < pg->nslots; s++)
-		if (pg->cells[s] && (SvFLAGS(pg->cells[s]) & SVs_GMG)) { magical = TRUE; break; }
+		if (pg->cells[s] && (SvFLAGS(pg->cells[s]) & SVs_GMG)) { magical = 1; break; }
 	if (!magical) return;
 	for (size_t s = 0; s < pg->nslots; s++)
 		if (pg->cells[s]) sv_2mortal(SvREFCNT_inc_simple_NN(pg->cells[s]));
@@ -14606,7 +14606,7 @@ static void flt_reg_row(pTHX_ HV *row, HV *out, AV *order) {
 	if (!arr) return;
 	bool keep_hash = 1; // FALSE when the stored hashes are not `out`'s
 #ifdef HvREHASH
-	if (HvREHASH(row)) keep_hash = FALSE;
+	if (HvREHASH(row)) keep_hash = 0;
 #endif
 	for (size_t b = 0; b <= (size_t)HvMAX(row); b++) {
 		for (HE *he = arr[b]; he; he = HeNEXT(he)) {
@@ -14693,18 +14693,18 @@ static void flt_check_cols(pTHX_ SV *cols, HV *inhv, AV *inav, bool hoa) {
 	for (SSize_t j = 0; j < nw; j++) {
 		SV *nm = av_at(aTHX_ want, j);
 		if (nm && SvOK(nm) && !SvROK(nm)) left++;
-		else found[j] = TRUE; //not a name: nothing to look for
+		else found[j] = 1; //not a name: nothing to look for
 	}
-	bool any_row = FALSE; //the frame had a row to look in; read after the walks
+	bool any_row = 0; //the frame had a row to look in; read after the walks
 	if (inav) {
 		const SSize_t n = av_len(inav) + 1;
 		for (SSize_t i = 0; i < n && left; i++) {
 			SV *rv = av_row_at(aTHX_ inav, i);
 			if (!rv) continue; //not a row: the filter pass says so
-			any_row = TRUE;
+			any_row = 1;
 			HV *row = (HV *)SvRV(rv);
 			for (SSize_t j = 0; j < nw; j++)
-				if (!found[j] && hv_exists_ent(row, av_at(aTHX_ want, j), 0)) { found[j] = TRUE; left--; }
+				if (!found[j] && hv_exists_ent(row, av_at(aTHX_ want, j), 0)) { found[j] = 1; left--; }
 		}
 	} else {
 		HE *e;
@@ -14714,10 +14714,10 @@ static void flt_check_cols(pTHX_ SV *cols, HV *inhv, AV *inav, bool hoa) {
 			SV *v = hv_iterval(inhv, e);
 			SvGETMAGIC(v);
 			if (!SvROK(v) || SvTYPE(SvRV(v)) != SVt_PVHV) continue; //the filter pass says so
-			any_row = TRUE;
+			any_row = 1;
 			HV *row = (HV *)SvRV(v);
 			for (SSize_t j = 0; j < nw; j++)
-				if (!found[j] && hv_exists_ent(row, av_at(aTHX_ want, j), 0)) { found[j] = TRUE; left--; }
+				if (!found[j] && hv_exists_ent(row, av_at(aTHX_ want, j), 0)) { found[j] = 1; left--; }
 		}
 		if (HV_IS_TIED(inhv)) while (hv_iternext(inhv)) {} //finish a tied walk rather than restart it: see cfilter
 		ITER_KEEP_END;
@@ -14888,7 +14888,7 @@ static bool S_csv_rx_find(pTHX_ REGEXP *restrict rx, SV *line_sv, char *line,
 	hit = cBOOL(pregexec(rx, line + from, line + len, line, 1, line_sv, 1));
 	if (utf8) SvUTF8_off(line_sv);
 	if (!hit)
-		return FALSE;
+		return 0;
 	*ms = CSV_RX_START(rx);
 	*me = CSV_RX_END(rx);
 	return TRUE;
@@ -14937,7 +14937,7 @@ static bool S_rx_reads_chars(pTHX_ REGEXP *rx){ //not restrict: perl's
 	    || cs == REGEX_ASCII_MORE_RESTRICTED_CHARSET;
 #else
 	PERL_UNUSED_ARG(rx);
-	return FALSE;
+	return 0;
 #endif
 }
 
@@ -14969,7 +14969,7 @@ static SV *S_quote_note(pTHX_ size_t q_line, bool mid, size_t to){
 static bool S_blank_run(const char *restrict s, size_t n){
 	for (size_t k = 0; k < n; k++)
 		if (s[k] != ' ' && s[k] != '\t')
-			return FALSE;
+			return 0;
 	return TRUE;
 }
 
@@ -15387,7 +15387,7 @@ static void S_plan_init(pTHX_ csv_plan *restrict p, HV *restrict h){
 				bool *used;
 				Newxz(used, p->ncol ? p->ncol : 1, bool);
 				for (size_t j = 0; j < p->nout; j++)
-					used[p->idx[j]] = TRUE;
+					used[p->idx[j]] = 1;
 				for (size_t f = 0; f < p->ncol; f++)
 					if (!used[f])
 						p->cls[f] = 0;
@@ -15490,15 +15490,15 @@ PERL_STATIC_INLINE bool S_text_is_iv(const char *restrict s, STRLEN n, IV *restr
 	const STRLEN d0 = neg ? 1 : 0; //the first digit
 	UV u = 0;
 	if (d0 == n || (s[d0] == '0' && n > 1)) //"-" alone; "-0", and any leading zero
-		return FALSE;
+		return 0;
 	if (n > 20) //IV_MIN is 20 bytes; nothing longer is one
-		return FALSE;
+		return 0;
 	{
 		unsigned char other = 0; //nonzero once a byte that is no digit has been seen
 		for (STRLEN k = d0; k < n; k++)
 			other |= (unsigned char)((unsigned char)(s[k] - '0') > 9);
 		if (other)
-			return FALSE;
+			return 0;
 	}
 	if (n - d0 <= CLS_IV_SAFE_DIGITS) {
 		for (STRLEN k = d0; k < n; k++)
@@ -15508,7 +15508,7 @@ PERL_STATIC_INLINE bool S_text_is_iv(const char *restrict s, STRLEN n, IV *restr
 		for (STRLEN k = d0; k < n; k++) {
 			const unsigned short int dig = (unsigned short int)(s[k] - '0');
 			if (u > (lim - dig) / 10)
-				return FALSE;
+				return 0;
 			u = u * 10 + dig;
 		}
 	}
@@ -15723,7 +15723,7 @@ PERL_STATIC_INLINE bool S_cell_is_na(pTHX_ const csv_plan *restrict p, SV *restr
 		for (size_t k = 0; k < p->n_na; k++)
 			if (p->na_len[k] == n && memcmp(p->na_s[k], s, n) == 0)
 				return TRUE;
-		return FALSE;
+		return 0;
 	}
 	return p->na && hv_exists_ent(p->na, v, 0);
 }
@@ -15755,7 +15755,7 @@ PERL_STATIC_INLINE bool S_bytes_is_na(pTHX_ const csv_plan *restrict p,
 		for (size_t k = 0; k < p->n_na; k++)
 			if (p->na_len[k] == n && memcmp(p->na_s[k], s, n) == 0)
 				return TRUE;
-		return FALSE;
+		return 0;
 	}
 	return p->na && n <= (STRLEN)I32_MAX && hv_exists(p->na, s, (I32)n);
 }
@@ -16134,7 +16134,7 @@ the same as anything.*/
 PERL_STATIC_INLINE bool S_same_pv(SV *a, SV *b){ //not restrict: may be one SV
 	if (!a || !b || !SvPOK(a) || !SvPOK(b) || SvROK(a) || SvROK(b)
 	    || SvMAGICAL(a) || SvMAGICAL(b) || cBOOL(SvUTF8(a)) != cBOOL(SvUTF8(b)))
-		return FALSE;
+		return 0;
 	return SvCUR(a) == SvCUR(b) && memEQ(SvPVX_const(a), SvPVX_const(b), SvCUR(a));
 }
 
@@ -16941,14 +16941,14 @@ memcmp()s it took a 20,000 x 50 workbook's read from 0.236 s to 0.274 s.*/
 PERL_STATIC_INLINE bool xlsx_is_name(const char *restrict p, const char *restrict end,
 	const char *restrict pfx, STRLEN plen, const char *restrict name, STRLEN nlen){
 	if ((size_t)(end - p) <= plen + nlen)
-		return FALSE;
+		return 0;
 	for (STRLEN k = 0; k < plen; k++)
 		if (p[k] != pfx[k])
-			return FALSE;
+			return 0;
 	p += plen;
 	for (STRLEN k = 0; k < nlen; k++)
 		if (p[k] != name[k])
-			return FALSE;
+			return 0;
 	return p[nlen] == '>' || p[nlen] == '/' || xlsx_is_ws(p[nlen]);
 }
 
@@ -17216,7 +17216,7 @@ static bool xlsx_text_piece(const char **restrict pp, const char *restrict end,
 	const char **restrict ps, STRLEN *restrict pn, unsigned short int *restrict kind){
 	const char *p = *pp;
 	if (p >= end)
-		return FALSE;
+		return 0;
 	if (*p == '<' && end - p >= 2 && p[1] == '!') {
 		const char *q = xlsx_skip_bang(p + 1, end);
 		if (q != p + 1) {
@@ -17253,7 +17253,7 @@ PERL_STATIC_INLINE bool xlsx_text_plain(const char *restrict s, STRLEN len){
 	for (STRLEN k = 0; k < len; k++) {
 		const char c = s[k];
 		if (c == '&' || c == '\r' || c == '<')
-			return FALSE;
+			return 0;
 	}
 	return TRUE;
 }
@@ -17292,7 +17292,7 @@ static bool xlsx_text_nonempty(const char *restrict s, STRLEN len){
 	while (xlsx_text_piece(&p, end, &ps, &pn, &kind))
 		if (kind != 2 && pn)
 			return TRUE;
-	return FALSE;
+	return 0;
 }
 
 /*The four hex digits of an _xHHHH_ escape at h, as *cp; FALSE if they are not
@@ -17305,7 +17305,7 @@ PERL_STATIC_INLINE bool xlsx_hex4(const char *restrict h, UV *restrict cp){
 		if      (c >= '0' && c <= '9') d = (UV)(c - '0');
 		else if (c >= 'a' && c <= 'f') d = (UV)(c - 'a' + 10);
 		else if (c >= 'A' && c <= 'F') d = (UV)(c - 'A' + 10);
-		else return FALSE;
+		else return 0;
 		v = v * 16 + d;
 	}
 	*cp = v;
@@ -17695,7 +17695,7 @@ static bool xlsx_cell_has_value(const xlsx_ws *restrict w, const char *restrict 
 		p = gt + 1;
 	}
 	if (!text)
-		return FALSE;
+		return 0;
 	tv = xlsx_attr(a, alen, "t", 1, &tvlen);
 	if (tv && tvlen == 9 && memcmp(tv, "inlineStr", 9) == 0) {
 		const char *q = body;
@@ -17704,16 +17704,16 @@ static bool xlsx_cell_has_value(const xlsx_ws *restrict w, const char *restrict 
 				return TRUE;
 			q = after;
 		}
-		return FALSE;
+		return 0;
 	}
 	txt = xlsx_child(body, body + blen, w->pfx, w->plen, "v", 1, &tlen, &after);
 	if (!txt || !tlen)
-		return FALSE;
+		return 0;
 	if (tv && tvlen == 1 && tv[0] == 's') { //xlsx_cell_value()'s index rule
 		size_t ix = 0;
 		for (STRLEN k = 0; k < tlen; k++) {
-			if (txt[k] < '0' || txt[k] > '9') return FALSE;
-			if (ix > ((size_t)-1 - 9) / 10) return FALSE;
+			if (txt[k] < '0' || txt[k] > '9') return 0;
+			if (ix > ((size_t)-1 - 9) / 10) return 0;
 			ix = ix * 10 + (size_t)(txt[k] - '0');
 		}
 		return ix < w->nsst && w->sst[ix] && SvPOK(w->sst[ix]) && SvCUR(w->sst[ix]) > 0;
@@ -17854,8 +17854,7 @@ free, and it is exactly what a mutation fuzz of the worksheet XML found.*/
 inside the header callback, unwinds past the XSUB body before it can drop it.
 w->row is NULL for exactly the window where someone else owns the row -- while
 the callback holds it -- so this frees it once or not at all.*/
-static void S_xlsx_ws_free(pTHX_ void *v)
-{
+static void S_xlsx_ws_free(pTHX_ void *v){
 	xlsx_ws *w = (xlsx_ws*)v;
 	SvREFCNT_dec((SV*)w->row);
 	Safefree(w);
@@ -17950,8 +17949,7 @@ static AV *xlsx_sst_parse(pTHX_ const char *restrict xml, STRLEN xlen){
 	return sst;
 }
 
-/*
-Formula and data-shape handling shared by lm() and glm().
+/*Formula and data-shape handling shared by lm() and glm().
 
 The two functions differ only in what they do with the design matrix once it
 exists, so everything up to that point is here: how a data argument is read,
@@ -18030,7 +18028,7 @@ static size_t lm_read_rows(pTHX_ SV *data_sv, const char *fname, char *fbuf, HV 
 		SV *val;
 		const bool tied = cBOOL(HV_IS_TIED(hv)); //a tied hash's hv_iterinit() reads 0 whatever it holds
 		AV *rn_av = NULL; //the row-name column, when there is one
-		bool saw_av = FALSE, saw_hv = FALSE, have_n = FALSE; //have_n: n has been taken from a data column
+		bool saw_av = FALSE, saw_hv = FALSE, have_n = 0; //have_n: n has been taken from a data column
 		size_t nentries = 0;
 		ITER_KEEP_BEGIN(hv);
 		for (k = 0; k < LM_N_ROW_NAME_KEYS; k++) {
@@ -18075,12 +18073,12 @@ static size_t lm_read_rows(pTHX_ SV *data_sv, const char *fname, char *fbuf, HV 
 			nentries++;
 			val = he_val(aTHX_ hv, entry);
 			if (!val || !SvROK(val)) continue;
-			if (SvTYPE(SvRV(val)) == SVt_PVHV) { saw_hv = TRUE; continue; }
+			if (SvTYPE(SvRV(val)) == SVt_PVHV) { saw_hv = 1; continue; }
 			if (SvTYPE(SvRV(val)) != SVt_PVAV) continue;
-			saw_av = TRUE;
+			saw_av = 1;
 			if (rn_av && (AV*)SvRV(val) == rn_av) continue;
 			const size_t len = (size_t)(av_len((AV*)SvRV(val)) + 1);
-			if (!have_n) { n = len; have_n = TRUE; }
+			if (!have_n) { n = len; have_n = 1; }
 			else if (len != n) {
 				SV *ks = sv_mortalcopy(hv_iterkeysv(entry));
 				hv_walk_out(aTHX_ hv);
@@ -18545,11 +18543,11 @@ static FmList fm_primary(pTHX_ FmWork *restrict w) {
 	if (w->depth == 0 && (p == w->start || p[-1] == '+')) {
 		size_t cl = 0;
 		int depth = 0;
-		bool dash = FALSE;
+		bool dash = 0;
 		for (; p[cl] && !(p[cl] == '+' && depth == 0); cl++) {
 			if (p[cl] == '(') depth++;
 			else if (p[cl] == ')') depth--;
-			else if (p[cl] == '-' && depth == 0) dash = TRUE;
+			else if (p[cl] == '-' && depth == 0) dash = 1;
 		}
 		if (dash) {
 			char *name = savepvn(p, cl);
@@ -18606,14 +18604,14 @@ static FmList fm_power_term(pTHX_ FmWork *restrict w) {
 	if (*w->p == '^') {
 		const char *p = w->p + 1;
 		size_t ip = 0;
-		bool digits = FALSE;
+		bool digits = 0;
 		for (; *p >= '0' && *p <= '9'; p++) {
-			digits = TRUE;
+			digits = 1;
 			if (ip < 1000000) ip = ip * 10 + (size_t)(*p - '0');
 		}
 		if (*p == '.') { // 2.9 is 2, as R's asInteger() reads it
 			p++;
-			while (*p >= '0' && *p <= '9') { digits = TRUE; p++; }
+			while (*p >= '0' && *p <= '9') { digits = 1; p++; }
 		}
 		if (!digits || (*p && !fm_is_op(*p)) || *p == '^' || *p == '(')
 			croak("%s: invalid power in formula", w->fname);
@@ -18754,7 +18752,7 @@ static void lm_formula_terms(pTHX_ char *rhs, const char *lhs,
 	Newxz(used, fw->nvar ? fw->nvar : 1, bool);
 	SAVEFREEPV(used);
 	for (size_t i = 0; i < all.n; i++)
-		for (size_t c = 0; c < all.t[i].n; c++) used[all.t[i].v[c]] = TRUE;
+		for (size_t c = 0; c < all.t[i].n; c++) used[all.t[i].v[c]] = 1;
 	for (size_t v = 0; v < fw->nvar; v++) ndecl += used[v];
 	Newx(uniq_terms, w->num_terms + ndecl + 1, char *);
 	if (has_intercept) uniq_terms[nu++] = savepv("Intercept");
@@ -19947,7 +19945,7 @@ makes (SvIV_please_nomg() then SvIOK): a string such as '9223372036854775807'
 is read as an exact IV or UV, an NV of 2**53 or more is not, as it never gets
 IOK.  Only called on cells that csort has already found numeric.*/
 static bool cs_int_cell(pTHX_ SV *sv) {
-	if (!sv || SvROK(sv) || SvGMAGICAL(sv)) return FALSE;
+	if (!sv || SvROK(sv) || SvGMAGICAL(sv)) return 0;
 	if (!SvIOK(sv) && (SvNOK(sv) || SvPOK(sv))) (void)SvIV(sv);
 	return cBOOL(SvIOK(sv));
 }
@@ -19983,7 +19981,7 @@ static void cs_numeric_sort(pTHX_ size_t *restrict idx, const SV *const *restric
 	cs_nvpair *pairs;
 	size_t *rest; // rows that sort last, in original order
 	size_t m = 0, r = 0;
-	bool big = FALSE; // TRUE = some key is at least 2**53 in magnitude
+	bool big = 0; // TRUE = some key is at least 2**53 in magnitude
 	Newx(pairs, n, cs_nvpair);  SAVEFREEPV(pairs);
 	Newx(rest, n, size_t);  SAVEFREEPV(rest);
 	for (size_t i = 0; i < n; i++) {
@@ -19992,7 +19990,7 @@ static void cs_numeric_sort(pTHX_ size_t *restrict idx, const SV *const *restric
 		if (cell && SvOK(cell)) x = SvNV(cell);
 		if (cell && SvOK(cell) && !nv_isnan(x)) {
 			pairs[m].k = x; pairs[m].i = i; m++;
-			if (x >= NV_2P53 || x <= -NV_2P53) big = TRUE;
+			if (x >= NV_2P53 || x <= -NV_2P53) big = 1;
 		}
 		else rest[r++] = i;
 	}
@@ -20164,7 +20162,7 @@ static bool cs_row_touches_undef(pTHX_ cs_code_ctx *c, size_t i) {
 	whichever way round the comparator sorts, as R's order() puts NaN last with
 	or without decreasing = TRUE.  Up to 0.33 it stayed in the sort, where every
 	comparison with it read as "equal" and a FATAL uninitialized warning died.*/
-	bool self_undef = FALSE;
+	bool self_undef = 0;
 	if (count) {
 		SV *res = POPs;
 		self_undef = !SvOK(res);
@@ -21413,12 +21411,12 @@ design value or offset that is not finite -- and the caller then drops it, as
 na.omit does.*/
 static bool anova_row(pTHX_ AnModel *restrict m, HV *hoa, HV **rows, size_t i, NV y) {
 	NV o = 0.0;
-	if (!lm_design_row(aTHX_ m->design, hoa, rows, i, m->x)) return FALSE;
+	if (!lm_design_row(aTHX_ m->design, hoa, rows, i, m->x)) return 0;
 	for (size_t j = 0; j < m->p; j++)
-		if (!nv_isfinite(m->x[j])) return FALSE;
+		if (!nv_isfinite(m->x[j])) return 0;
 	for (size_t j = 0; j < m->noff; j++) {
 		const NV v = evaluate_term(aTHX_ hoa, rows, (unsigned)i, m->off[j]);
-		if (!nv_isfinite(v)) return FALSE;
+		if (!nv_isfinite(v)) return 0;
 		o += v;
 	}
 	m->y = y - o;
@@ -23019,10 +23017,10 @@ lower score is the more positive.  Anything but '>' or '<' used to be read as
 call-form error, with the caller's help screen.*/
 static bool roc_direction(pTHX_ SV *v, const char *who) {
 	const char *d = SvPV_nolen(v);
-	if (strEQ(d, ">")) return FALSE;
+	if (strEQ(d, ">")) return 0;
 	if (strEQ(d, "<")) return TRUE;
 	usage_croak(aTHX_ who, "direction must be '>' or '<', not '%s'", d);
-	return FALSE; //not reached
+	return 0; //not reached
 }
 
 /*The score at index i, into *out, or FALSE when it is missing.
@@ -23038,12 +23036,12 @@ A value that is not a number croaks: SvNV() turned it into 0, and under
 FATAL warnings died past the caller's buffers.*/
 static bool roc_score_at(pTHX_ AV *av, SSize_t i, const char *who, NV *out) {
 	SV *sv = av_slow_at(aTHX_ av, i); //runs get magic once; NULL for a hole or undef
-	if (!sv) return FALSE;
+	if (!sv) return 0;
 	sv = sv_fetched(aTHX_ sv);
 	if (!sv_is_numeric_arg(aTHX_ sv))
 		croak("%s: score at index %" IVdf " is not a number", who, (IV)i);
 	const NV s = SvNV(sv);
-	if (nv_isnan(s)) return FALSE;
+	if (nv_isnan(s)) return 0;
 	*out = s;
 	return TRUE;
 }
@@ -23713,7 +23711,7 @@ static void km_step(pTHX_ KmCurve *restrict k, NV t, NV z) {
 		which is a number where there is no answer, and 0 is a
 		plausible-looking one.*/
 		k->S = 0.0; k->events += d;
-		k->var_undefined = TRUE;
+		k->var_undefined = 1;
 	}
 	av_push(k->t,  newSVnv(t));
 	av_push(k->nr, newSVuv((UV)nr));
@@ -23746,7 +23744,7 @@ static void km_step(pTHX_ KmCurve *restrict k, NV t, NV z) {
 		}
 	} else if (k->median_on_half && k->S < k->median_S) {
 		k->median = (k->median + t) / 2.0;
-		k->median_on_half = FALSE;
+		k->median_on_half = 0;
 	}
 	k->at_risk -= k->block;
 	k->d = k->c = k->block = 0;
@@ -23795,7 +23793,7 @@ static bool srv_status_code(const NV *restrict raw, size_t n, NV *restrict shift
 	*shift = (smax == 2.0) ? 1.0 : 0.0;
 	for (size_t i = 0; i < n; i++) {
 		const NV s = raw[i] - *shift;
-		if (s != 0.0 && s != 1.0) { *bad = i; return FALSE; }
+		if (s != 0.0 && s != 1.0) { *bad = i; return 0; }
 	}
 	return TRUE;
 }
@@ -24200,10 +24198,10 @@ typedef struct { NV lo, up, by; size_t n; bool strict; } dens_grid;
 
 static void dens_grid_init(dens_grid *restrict g, NV lo, NV up, size_t n){
 	g->lo = lo; g->up = up; g->n = n; g->by = dens_seq_by(lo, up, n);
-	g->strict = TRUE;
+	g->strict = 1;
 	for (size_t k = 1; k < n; k++)
 		if (!(dens_seq_at(lo, up, g->by, n, k) > dens_seq_at(lo, up, g->by, n, k - 1))) {
-			g->strict = FALSE;
+			g->strict = 0;
 			break;
 		}
 }
@@ -25034,7 +25032,7 @@ reference already has its string or makes a temporary one, so those go through
 SvPV() directly.*/
 static size_t set_key_put(pTHX_ dd_ctx *T, SV *sv, SV *scratch, char *numbuf) { // no restrict on sv: perl-managed
 	STRLEN klen;
-	bool utf8 = FALSE;
+	bool utf8 = 0;
 	const char *key = nk_num_pv(sv, numbuf, &klen, T->fast_nv);
 	if (!key) {
 		if (SvNIOK(sv) && !SvPOK(sv) && !SvROK(sv)) {
@@ -25045,7 +25043,7 @@ static size_t set_key_put(pTHX_ dd_ctx *T, SV *sv, SV *scratch, char *numbuf) { 
 		if (SvUTF8(sv) && pv_high_byte(key, klen)) {
 			sv_setsv(scratch, sv);
 			if (sv_utf8_downgrade(scratch, 1)) key = SvPV(scratch, klen);
-			else                               utf8 = TRUE;
+			else                               utf8 = 1;
 		}
 	}
 	const size_t start = T->len;
@@ -26077,7 +26075,7 @@ frame or row to it; the callers, still in Perl, test ref() the same way. sv's
 get magic must have run.*/
 static bool ref_named(pTHX_ SV *sv, svtype t, const char *restrict name){
  //not restrict: sv is perl-managed
-	if (!SvROK(sv)) return FALSE;
+	if (!SvROK(sv)) return 0;
 	SV *rv = SvRV(sv);
 	return SvOBJECT(rv) ? strEQ(sv_reftype(rv, TRUE), name) : SvTYPE(rv) == t;
 }
@@ -26230,7 +26228,7 @@ static bool ds_seen(pTHX_ ds_ctx *restrict C, const void *p) {
 	const unsigned char m = (unsigned char)(1U << (g & 7));
 	if (bits[g >> 3] & m) return TRUE;
 	bits[g >> 3] |= m;
-	return FALSE;
+	return 0;
 }
 /*The body perl allocates for each type of SV: sv.c's bodies_by_type[], which
 no header gives away. A body below SVt_PVMG is allocated without the fields
@@ -26556,7 +26554,7 @@ fullwidth forms and signs, and the emoji from U+1F300 to U+1FAFF. It is not
 the whole of Unicode's East Asian Width property, and a combining mark still
 counts as one column.*/
 PERL_STATIC_INLINE bool cp_is_wide(UV o) {
-	if (o < 0x1100) return FALSE;
+	if (o < 0x1100) return 0;
 	return (o <= 0x115F)
 	    || (o >= 0x2E80 && o <= 0xA4CF)
 	    || (o >= 0xAC00 && o <= 0xD7A3)
@@ -26616,14 +26614,14 @@ static void grid_prep(pTHX_ grid *restrict G, grid_cell *restrict out, const cha
 	size_t keep_w = 0;	// the display columns up to there
 	size_t keep_cost = 0;	// the same with a NUL counted as 1, which is what the budget is spent in
 	bool cutting = maxw > 0; // FALSE once a character did not fit the budget
-	bool over = FALSE;	// the text is wider than maxw
+	bool over = 0;	// the text is wider than maxw
 	const U8 *s = (const U8 *)p, *const end = s + len;
 	// One character of nb bytes and cw columns has been written at cur.
 #define GRID_CHAR(nb, cw) STMT_START { \
 		cur += (nb); w += (cw); \
 		if (cutting) { \
 			const size_t cost_ = (cw) ? (cw) : 1; \
-			if (keep_cost + cost_ > budget) cutting = FALSE; \
+			if (keep_cost + cost_ > budget) cutting = 0; \
 			else { keep_cost += cost_; keep_w += (cw); keep = cur; } \
 		} \
 	} STMT_END
@@ -26648,7 +26646,7 @@ static void grid_prep(pTHX_ grid *restrict G, grid_cell *restrict out, const cha
 			GRID_CHAR(n, cw);
 			s += n;
 		}
-		if (maxw && w > maxw) over = TRUE;
+		if (maxw && w > maxw) over = 1;
 	}
 #undef GRID_CHAR
 	if (!over) {
@@ -26706,14 +26704,14 @@ static bool grid_cell_sv(pTHX_ grid *restrict G, grid_cell *restrict out, SV *v,
 	}
 	if (!v || !SvOK(v)) {
 		*out = G->na;
-		return FALSE;
+		return 0;
 	}
 	const bool isnum = grid_is_number(aTHX_ v);
-	if (!isnum && numeric) *numeric = FALSE;
+	if (!isnum && numeric) *numeric = 0;
 	STRLEN len;
 	char numbuf[NK_NUMBUF];
 	const char *p = nk_num_pv(v, numbuf, &len, G->fast_nv);
-	bool flagged = FALSE;
+	bool flagged = 0;
 	if (!p) {
 		if (!SvPOK(v) && !SvROK(v)) { //a number: stringified on a copy, so no string is left on the caller's cell
 			sv_setsv_flags(G->scratch, v, SV_NOSTEAL);
@@ -26729,9 +26727,9 @@ static bool grid_cell_sv(pTHX_ grid *restrict G, grid_cell *restrict out, SV *v,
 /*Row r's label, from a value. An undef label is painted as undef; the others
 take their color in grid_render(), once it is known whether all are numbers.*/
 static void grid_label_sv(pTHX_ grid *restrict G, size_t r, SV *v) {
-	bool isnum = TRUE;
-	if (!grid_cell_sv(aTHX_ G, &G->labs[r], v, &isnum)) isnum = FALSE;
-	if (!isnum) G->lab_numeric = FALSE;
+	bool isnum = 1;
+	if (!grid_cell_sv(aTHX_ G, &G->labs[r], v, &isnum)) isnum = 0;
+	if (!isnum) G->lab_numeric = 0;
 }
 // Row r's label, when it is the row's index.
 static void grid_label_index(pTHX_ grid *restrict G, size_t r, size_t i) {
@@ -26773,13 +26771,13 @@ static SV *grid_sgr(pTHX_ SV *spec) { //no restrict: perl's
 	if (*h == '#') { h++; hl--; }
 	if (hl == 6) {
 		unsigned int rgb[3] = { 0, 0, 0 };
-		bool hex = TRUE;
+		bool hex = 1;
 		for (unsigned short int i = 0; i < 6; i++) {
 			const char c = h[i];
 			const int d = (c >= '0' && c <= '9') ? c - '0'
 			            : (c >= 'a' && c <= 'f') ? c - 'a' + 10
 			            : (c >= 'A' && c <= 'F') ? c - 'A' + 10 : -1;
-			if (d < 0) { hex = FALSE; break; }
+			if (d < 0) { hex = 0; break; }
 			rgb[i / 2] = rgb[i / 2] * 16 + (unsigned int)d;
 		}
 		if (hex) return sv_2mortal(newSVpvf("\033[38;2;%u;%u;%um", rgb[0], rgb[1], rgb[2]));
@@ -26797,9 +26795,9 @@ static SV *grid_sgr(pTHX_ SV *spec) { //no restrict: perl's
 }
 // Whether io is a terminal, as -t answers.
 static bool io_is_tty(pTHX_ IO *io) { //no restrict: perl's
-	if (!io) return FALSE;
+	if (!io) return 0;
 	PerlIO *fp = IoIFP(io) ? IoIFP(io) : IoOFP(io);
-	if (!fp) return FALSE;
+	if (!fp) return 0;
 	const int fd = PerlIO_fileno(fp);
 	return fd >= 0 && PerlLIO_isatty(fd);
 }
@@ -26815,7 +26813,7 @@ without it one trailing newline is allowed, as its /^\d+$/ allowed for n, so
 that a line read from a file is still a number. A number is rendered on a
 copy, so that nothing is cached on the caller's SV. sv's get magic has run.*/
 static bool view_uint_arg(pTHX_ SV *sv, size_t *restrict out, bool strict) { //no restrict on sv: perl's
-	if (!sv || !SvOK(sv)) return FALSE;
+	if (!sv || !SvOK(sv)) return 0;
 	STRLEN len;
 	char numbuf[NK_NUMBUF];
 	const char *p = nk_num_pv(sv, numbuf, &len, FALSE);
@@ -26824,10 +26822,10 @@ static bool view_uint_arg(pTHX_ SV *sv, size_t *restrict out, bool strict) { //n
 		p = SvPV_nomg(sv, len);
 	}
 	if (!strict && len > 1 && p[len - 1] == '\n') len--;
-	if (len == 0 || (strict && p[0] == '0')) return FALSE;
+	if (len == 0 || (strict && p[0] == '0')) return 0;
 	size_t v = 0;
 	for (STRLEN i = 0; i < len; i++) {
-		if (p[i] < '0' || p[i] > '9') return FALSE;
+		if (p[i] < '0' || p[i] > '9') return 0;
 		const size_t d = (size_t)(p[i] - '0');
 		v = v > (SIZE_MAX - d) / 10 ? SIZE_MAX : v * 10 + d;
 	}
@@ -26871,7 +26869,7 @@ static void grid_setup(pTHX_ grid *restrict G, const char *restrict fn, const gr
 	    || (SvPOK(a->color) && !SvROK(a->color) && SvCUR(a->color) == 4
 	        && memEQ(SvPVX_const(a->color), "auto", 4))) {
 		//auto: color when the table is about to be printed to a terminal
-		G->color = FALSE;
+		G->color = 0;
 		if (!quiet) {
 			IO *io = (a->to && SvOK(a->to)) ? sv_2io(a->to)
 			       : GvIO(gv_fetchpvs("STDOUT", GV_ADD, SVt_PVIO));
@@ -26918,7 +26916,7 @@ static void grid_alloc(pTHX_ grid *restrict G, const char *restrict fn, size_t n
 	SAVEFREEPV(G->heads);
 	Newx(G->numeric, ncol ? ncol : 1, bool);
 	SAVEFREEPV(G->numeric);
-	for (size_t j = 0; j < ncol; j++) G->numeric[j] = TRUE; //a column with no defined cell is a numeric one
+	for (size_t j = 0; j < ncol; j++) G->numeric[j] = 1; //a column with no defined cell is a numeric one
 	Newx(G->labs, nrow ? nrow : 1, grid_cell);
 	SAVEFREEPV(G->labs);
 	const size_t ncell = nrow * ncol;
@@ -27177,23 +27175,23 @@ turned out to need perl code to read -- a tied scalar, or a tied column whose
 length is a FETCHSIZE -- and the caller asks again without it.*/
 static bool view_hash_scan(pTHX_ HV *hv, bool raw, short int *restrict vt, size_t *restrict longest) {
 	view_walk w;
-	bool any_arr = FALSE, any_hash = FALSE;
+	bool any_arr = FALSE, any_hash = 0;
 	*vt = 0;
 	*longest = 0;
 	view_walk_begin(aTHX_ &w, hv, raw);
 	for (HE *he; (he = view_walk_next(aTHX_ &w)) != NULL; ) {
 		SV *v = he_val(aTHX_ hv, he);
 		if (w.raw) {
-			if (SvGMAGICAL(v)) return FALSE; //a raw walk has nothing to end
+			if (SvGMAGICAL(v)) return 0; //a raw walk has nothing to end
 		} else if (!SvRMAGICAL(hv)) SvGETMAGIC(v); //he_val() runs get magic only for a magical hash
 		if (!ref_named(aTHX_ v, SVt_PVAV, "ARRAY")) {
-			if (ref_named(aTHX_ v, SVt_PVHV, "HASH")) any_hash = TRUE;
+			if (ref_named(aTHX_ v, SVt_PVHV, "HASH")) any_hash = 1;
 			continue;
 		}
-		any_arr = TRUE;
+		any_arr = 1;
 		if (SvTYPE(SvRV(v)) != SVt_PVAV) continue; //an object blessed into a package named ARRAY
 		AV *col = (AV *)SvRV(v);
-		if (w.raw && SvRMAGICAL((SV *)col)) return FALSE;
+		if (w.raw && SvRMAGICAL((SV *)col)) return 0;
 		const size_t l = (size_t)(av_len(col) + 1);
 		if (l > *longest) *longest = l;
 	}
@@ -27336,7 +27334,7 @@ test the perl loops made.  An object that overloads 0+ is a number when what
 it numifies to is one, which only Scalar::Util can say, so it is asked.*/
 static bool fr_lln(pTHX_ SV *sv) { // no restrict: perl-managed
 	if (!SvROK(sv)) return cBOOL(sv_lln_nomg(aTHX_ sv));
-	if (!SvAMAGIC(sv)) return FALSE;
+	if (!SvAMAGIC(sv)) return 0;
 	dSP;
 	ENTER;
 	SAVETMPS;
@@ -27382,13 +27380,13 @@ the copy back to the start along the iterator, under ITER_KEEP, where a tied
 src is walked through its tie and each value FETCHed once.*/
 static void fr_hv_fill(pTHX_ HV *dst, HV *src) { // no restrict: perl-managed
 	if (!SvMAGICAL((SV *)src)) {
-		bool plain = TRUE; // FALSE = a value has get magic
+		bool plain = 1; // FALSE = a value has get magic
 		view_walk w;
 		view_walk_begin(aTHX_ &w, src, TRUE);
 		for (HE *he; (he = view_walk_next(aTHX_ &w)) != NULL; ) {
 			SV *v = HeVAL(he);
 			if (SvGMAGICAL(v)) {
-				plain = FALSE;
+				plain = 0;
 				break;
 			}
 			SV *c = newSV(0);
@@ -27569,7 +27567,7 @@ static void go_order(pTHX_ AV *const *tup, size_t n, size_t *restrict idx) { // 
 	SAVEFREEPV(num);
 	Newx(tmp, n, size_t);
 	SAVEFREEPV(tmp);
-	for (size_t j = 0; j < w; j++) num[j] = TRUE;
+	for (size_t j = 0; j < w; j++) num[j] = 1;
 	for (size_t t = 0; t < n; t++) {
 		for (size_t j = 0; j < w; j++) {
 			SV *v = av_at(aTHX_ tup[t], (SSize_t)j);
@@ -27577,7 +27575,7 @@ static void go_order(pTHX_ AV *const *tup, size_t n, size_t *restrict idx) { // 
 			if (v && SvOK(v)) {
 				e->sv = sv_mortalcopy(v);
 				e->cls = 0;
-				if (num[j] && !looks_like_number(e->sv)) num[j] = FALSE;
+				if (num[j] && !looks_like_number(e->sv)) num[j] = 0;
 			} else {
 				e->sv = NULL;
 				e->cls = 2;
@@ -27635,7 +27633,7 @@ static SV *agc_reduce(pTHX_ short int code, SV *f, CV *const *xs, AV *cells, AV 
 			if (!skipna && nna) return newSV(0);
 			if (code == AGC_MODE ? nd == 0 : nd < agc_min[code]) return newSV(0);
 		}
-		bool trap = FALSE; // TRUE = call inside an eval: some cell is not a number
+		bool trap = 0; // TRUE = call inside an eval: some cell is not a number
 		if (trap_ok && code < AGC_NXS)
 			for (size_t i = 0; i < nd && !trap; i++)
 				trap = !sv_is_numeric_arg(aTHX_ AvARRAY(def)[i]);
@@ -27786,7 +27784,7 @@ many of the columns ck are undef or missing in it: none of them, or with
 how_all not all of them.  An element that is not a hash, a reference to one
 blessed into another class included (ref() eq 'HASH' says no), is all undef.*/
 static bool dn_keep(pTHX_ SV *e, const fr_key *restrict ck, size_t nc, bool how_all) { // no restrict on e: perl-managed
-	if (!ref_named(aTHX_ e, SVt_PVHV, "HASH")) return FALSE;
+	if (!ref_named(aTHX_ e, SVt_PVHV, "HASH")) return 0;
 	HV *row = (HV *)SvRV(e);
 	size_t nu = 0; // undef or missing among ck
 	for (size_t j = 0; j < nc; j++) {
@@ -28087,8 +28085,8 @@ _df_shape(...)
 			SV *v = he_val(aTHX_ hv, he);
  //he_val() runs get magic only for a magical hash; a plain one can still hold a tied value
 			if (!SvRMAGICAL(hv)) SvGETMAGIC(v);
-			if (ref_named(aTHX_ v, SVt_PVAV, "ARRAY"))     saw_arr  = TRUE;
-			else if (ref_named(aTHX_ v, SVt_PVHV, "HASH")) saw_hash = TRUE;
+			if (ref_named(aTHX_ v, SVt_PVAV, "ARRAY"))     saw_arr  = 1;
+			else if (ref_named(aTHX_ v, SVt_PVHV, "HASH")) saw_hash = 1;
 			if (saw_arr && saw_hash) {
 				hv_walk_out(aTHX_ hv);
 				croak("%s: hashref mixes array and hash values (ambiguous HoA/HoH)\n", who);
@@ -28221,7 +28219,7 @@ view(...)
 		total = (UV)(top + 1);
 		show = (UV)n < total ? n : (size_t)total;
 		const size_t scan = show ? show : total ? 1 : 0; //rows the columns are read off: those shown, or the first when none is
-		bool aoa = FALSE;
+		bool aoa = 0;
 		for (SSize_t i = 0; i <= top; i++) { //an AoA or an AoH by the first defined element
 			SV **e = av_fetch(av, i, 0);
 			if (!e) continue;
@@ -29148,11 +29146,11 @@ _pivot_split(df, shape, index, columns, values, how)
 	for (SSize_t r = 0; r < R; r++) {
 		SV *row = rows ? rows[r] : NULL;
 		const size_t cs = TC->len;
-		bool skip = FALSE; // TRUE = an undef columns cell
+		bool skip = 0; // TRUE = an undef columns cell
 		for (SSize_t j = 0; j < C.n; j++) {
 			SV *v = ag_at(aTHX_ &C, row, r, j);
 			if (v) SvGETMAGIC(v);
-			if (!v || !SvOK(v)) { skip = TRUE; break; }
+			if (!v || !SvOK(v)) { skip = 1; break; }
 			ag_cell(aTHX_ TC, v, scratch);
 		}
 		if (skip) {
@@ -29951,14 +29949,14 @@ _t1_col(src, kind, col, gidx, ng, R, type)
 	if (SvOK(type)) {
 		cont = strEQ(SvPV_nolen(type), "continuous");
 	} else {
-		bool any = FALSE; // a defined cell was seen
-		cont = TRUE;
+		bool any = 0; // a defined cell was seen
+		cont = 1;
 		for (SSize_t r = 0; r < R && cont; r++) {
 			if (!cells[r]) continue;
-			if (!fr_lln(aTHX_ cells[r])) cont = FALSE;
-			any = TRUE;
+			if (!fr_lln(aTHX_ cells[r])) cont = 0;
+			any = 1;
 		}
-		if (!any) cont = FALSE;
+		if (!any) cont = 0;
 	}
 	AV *res = newAV();
 	retval = sv_2mortal(newRV_noinc((SV *)res));
@@ -30497,7 +30495,7 @@ CODE:
 	Studentized range CDF, as in R's ptukey(), for one q: unlike R's, it does
 	not take a vector.*/
 	NV nranges = 1.0;
-	bool lower_tail = TRUE, log_p = FALSE; //lower_tail and log_p also answer to lower and log, as pt() does
+	bool lower_tail = TRUE, log_p = 0; //lower_tail and log_p also answer to lower and log, as pt() does
 	if ((items - 3) % 2 != 0)
 		usage_croak(aTHX_ "ptukey", "arguments after q, nmeans and df must be name => value pairs");
 	for (int i = 3; i < items; i += 2) {
@@ -30532,7 +30530,7 @@ CODE:
 	/*qtukey(p, nmeans, df, nranges => 1, lower => 1, log => 0)
 	Inverse studentized range CDF, as in R's qtukey().*/
 	NV nranges = 1.0;
-	bool lower_tail = TRUE, log_p = FALSE; //lower_tail and log_p also answer to lower and log, as pt() does
+	bool lower_tail = TRUE, log_p = 0; //lower_tail and log_p also answer to lower and log, as pt() does
 	if ((items - 3) % 2 != 0)
 		usage_croak(aTHX_ "qtukey", "arguments after p, nmeans and df must be name => value pairs");
 	for (int i = 3; i < items; i += 2) {
@@ -30662,7 +30660,7 @@ CODE:
 	if (items < 1) usage_croak(aTHX_ "binom_test", "the number of successes is required");
 
 	UV x = 0, n = 0;
-	bool have_n = FALSE;
+	bool have_n = 0;
 	Stack_off_t pos = 1; // index where named args begin
 
 	SV *x_sv = ST(0);
@@ -31049,11 +31047,11 @@ PPCODE:
 			'18446744073709551615' wrapped to -1 and sorted by the last column,
 			and '9223372036854775808' to a negative index; on a 32-bit perl
 			'4294967295' did the same.*/
-			bool too_big = FALSE;
+			bool too_big = 0;
 			for (; p < collen; p++) {
 				if (colname[p] < '0' || colname[p] > '9') break;
 				const IV d = colname[p] - '0';
-				if (v > (IV)((SSize_t_MAX - d) / 10)) too_big = TRUE;
+				if (v > (IV)((SSize_t_MAX - d) / 10)) too_big = 1;
 				else v = v * 10 + d;
 			}
 			if (p != collen)
@@ -32290,7 +32288,7 @@ SV *oneway_test(...)
 		HV          *in_hv = NULL, *ret_hv;
 		AV          *in_av = NULL;
 		AV          *names; //one key SV per group, in group order: SVs, so a UTF-8 label stays UTF-8
-		bool         var_equal = FALSE;
+		bool         var_equal = 0;
 		SV          *formula_sv = NULL;
 		NV          *flat = NULL;
 		size_t      *sizes = NULL;
@@ -32659,8 +32657,8 @@ CODE:
 		if (use_exact) {
 			Newx(z, N + 1, bool);
 			SAVEFREEPV(z);
-			z[0] = FALSE;
-			z[N] = TRUE;
+			z[0] = 0;
+			z[N] = 1;
 		}
 		bool has_ties = FALSE, any_step = 0; //any_step: two pooled values differ somewhere
 		{
@@ -32671,7 +32669,7 @@ CODE:
 				             ? x_data[a++] : y_data[b++];
 				if (k > 0) {
 					const bool step = cBOOL(v != prev);
-					if (step) any_step = TRUE; else has_ties = TRUE;
+					if (step) any_step = 1; else has_ties = 1;
 					if (z) z[k] = step;
 					else if (has_ties) break; //asymptotic: only whether there are ties matters
 				}
@@ -32709,9 +32707,9 @@ CODE:
 		nv_sort(x_data, valid_nx); //NaN already dropped above
 		/*R: TIES <- length(unique(x)) < n, which warns whichever path runs and
 		keeps the automatic choice off the exact one.*/
-		bool ties = FALSE;
+		bool ties = 0;
 		for (size_t i = 1; i < valid_nx; i++)
-			if (x_data[i] == x_data[i - 1]) { ties = TRUE; break; }
+			if (x_data[i] == x_data[i - 1]) { ties = 1; break; }
 		if (ties) warn("ks_test: ties should not be present for the one-sample Kolmogorov-Smirnov test");
 		NV max_d = 0.0, max_d_plus = 0.0, max_d_minus = 0.0;
 		for (size_t i = 0; i < valid_nx; i++) {
@@ -34242,7 +34240,7 @@ PREINIT:
 	csv_plan *plan = NULL;
 	bool in_quotes = FALSE, post_quote = FALSE, use_cb = 0;
 	bool first_line = 1; //a byte-order mark can only be on the first line
-	bool layered = FALSE; //fp is the caller's handle, read through a PerlIO::via layer: see the sv_gets() below
+	bool layered = 0; //fp is the caller's handle, read through a PerlIO::via layer: see the sv_gets() below
 	size_t sep_len, comment_len;
 	size_t lineno = 0; //physical lines read so far, for the messages
 	size_t q_line = 0; //the line the open quoted field began on
@@ -34309,7 +34307,7 @@ caller's to close.*/
 		fp = IoIFP(io);
 		if (!fp)
 			croak("_parse_csv_file: fh is not an open handle");
-		layered = TRUE;
+		layered = 1;
 		ENTER;
 	} else {
 /*Binary, as the compressed path's handle is: a text-mode open is :crlf on
@@ -35236,13 +35234,13 @@ SV *predict(...)
 						them into a fixed buffer: a 512-byte copy truncated a term
 						whose factor came after 511 bytes of names, so the term was
 						taken for a continuous one and predicted NaN.*/
-						bool has_factor = FALSE;
+						bool has_factor = 0;
 						const char *restrict cp = t;
 						for (;;) {
 							const char *cl = strchr(cp, ':');
 							const size_t cl_len = cl ? (size_t)(cl - cp) : strlen(cp);
 							if (dummy_hv && hv_exists(dummy_hv, cp, (I32)cl_len))
-								has_factor = TRUE;
+								has_factor = 1;
 							if (!cl) break;
 							cp = cl + 1;
 						}
@@ -37570,10 +37568,10 @@ SV *lmer(...)
 	{
 		SV *bad = NULL;
 		for (size_t k = 0; k < nre; k++) {
-			bool seen = FALSE;
+			bool seen = 0;
 			if (NL[k] < n) continue;
 			for (size_t k2 = 0; k2 < k; k2++)
-				if (strEQ(re_group[k2], re_group[k])) { seen = TRUE; break; }
+				if (strEQ(re_group[k2], re_group[k])) { seen = 1; break; }
 			if (seen) continue;
 			if (!bad) bad = sv_2mortal(newSVpv(re_group[k], 0));
 			else sv_catpvf(bad, ", %s", re_group[k]);
@@ -38667,8 +38665,8 @@ SV* rbinom(...)
 	size_t n = 0;
 	UV size = 0; //a trial count, not an element count: see below
 	NV prob = 0.5;
-	bool n_set = FALSE, size_set = FALSE, prob_set = FALSE;
-	bool na = FALSE; //a fractional size or a NaN prob: R's rbinom() gives NA for every draw
+	bool n_set = FALSE, size_set = FALSE, prob_set = 0;
+	bool na = 0; //a fractional size or a NaN prob: R's rbinom() gives NA for every draw
 	/*Stack_off_t, the type of `items`: an unsigned short wrapped past 65535
 	arguments and the loop never ended.*/
 	for (Stack_off_t i = 0; i < items; i += 2) {
@@ -38676,7 +38674,7 @@ SV* rbinom(...)
 		SV* val = ST(i + 1);
 		if (strEQ(key, "n")) {
 			n = sv_count_arg(aTHX_ val, "rbinom", "n", 0);
-			n_set = TRUE;
+			n_set = 1;
 		} else if (strEQ(key, "size")) {
 			/*size is a trial count, not an element count, so neither
 			SV_COUNT_MAX nor SIZE_MAX applies: R draws from rbinom(3, 1e15, 0.3).
@@ -38687,8 +38685,8 @@ SV* rbinom(...)
 			size = sv_uv_arg_to(aTHX_ val, "rbinom", "size", 0, NV_INF, (UV)IV_MAX);
 			/*sv_count_arg() truncates, so 2.5 drew from size 2.  R's rbinom()
 			refuses a size that is not a whole number with NA.*/
-			if (SvNV(val) != (NV)size) na = TRUE;
-			size_set = TRUE;
+			if (SvNV(val) != (NV)size) na = 1;
+			size_set = 1;
 		} else if (strEQ(key, "prob")) {
 			/*SvNV() read 'abc' as 0, so rbinom(prob => 'abc') returned zeros.
 			NaN passes `prob < 0 || prob > 1`, and binom_draw() then never
@@ -38696,8 +38694,8 @@ SV* rbinom(...)
 			if (!SvOK(val) || !sv_is_numeric_arg(aTHX_ val))
 				usage_croak(aTHX_ "rbinom", "prob must be a number (got '%s')", SvOK(val) ? SvPV_nolen(val) : "undef");
 			prob = SvNV(val);
-			if (nv_isnan(prob)) na = TRUE;
-			prob_set = TRUE;
+			if (nv_isnan(prob)) na = 1;
+			prob_set = 1;
 		}
 		else usage_croak(aTHX_ "rbinom", "unknown argument '%s'", key);
 	}
@@ -39023,7 +39021,7 @@ SV* quantile(...)
 		NV *x;
 		Newx(x, n_raw, NV); SAVEFREEPV(x);
 		size_t n = 0;
-		bool saw_nan = FALSE;
+		bool saw_nan = 0;
 		{
 			SSize_t len = (SSize_t)n_raw, j = 0;
 			if (!SvRMAGICAL((SV*)x_av)) av_scan_extract(x_av, &j, len, x, &n);
@@ -39036,7 +39034,7 @@ SV* quantile(...)
 				x[n++] = SvNV(tv);
 			}
 			for (size_t k = 0; k < n; k++)
-				if (nv_isnan(x[k])) { saw_nan = TRUE; break; }
+				if (nv_isnan(x[k])) { saw_nan = 1; break; }
 		}
 		if (n == 0) croak("quantile: 'x' contains no valid numbers");
 		/*R's type 7 (quantile.default, R 4.6.1), in its own arithmetic: the
@@ -40596,7 +40594,7 @@ CODE:
 	              || !SvROK(ST(1)) || SvTYPE(SvRV(ST(1))) != SVt_PVAV)
 		usage_croak(aTHX_ "auc", "the first two arguments must be array refs of scores and labels");
 	if (items % 2) usage_croak(aTHX_ "auc", "options must be key => value pairs");
-	SV *positive = NULL; bool lower_pos = FALSE; //NULL: the default, "1"
+	SV *positive = NULL; bool lower_pos = 0; //NULL: the default, "1"
 	for (Stack_off_t i = 2; i < items; i += 2) {
 		const char *k = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
 		if      (strEQ(k, "positive"))  positive = v;
@@ -40635,15 +40633,15 @@ CODE:
 	              || !SvROK(ST(1)) || SvTYPE(SvRV(ST(1))) != SVt_PVAV)
 		usage_croak(aTHX_ "auroc", "the first two arguments must be array refs of labels and scores");
 	if (items % 2) usage_croak(aTHX_ "auroc", "options must be key => value pairs");
-	SV *positive = NULL; bool lower_pos = FALSE; //NULL: the default, "1"
-	bool have_cutoff = FALSE, have_frac = FALSE; NV cutoff = 0.0, active_frac = 0.0;
-	bool frac_low = FALSE;
+	SV *positive = NULL; bool lower_pos = 0; //NULL: the default, "1"
+	bool have_cutoff = FALSE, have_frac = 0; NV cutoff = 0.0, active_frac = 0.0;
+	bool frac_low = 0;
 	for (Stack_off_t i = 2; i < items; i += 2) {
 		const char *k = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
 		if      (strEQ(k, "positive"))  positive = v;
 		else if (strEQ(k, "direction")) lower_pos = roc_direction(aTHX_ v, "auroc");
-		else if (strEQ(k, "cutoff"))    { have_cutoff = TRUE; cutoff = SvNV(v); }
-		else if (strEQ(k, "active_frac") || strEQ(k, "active")) { have_frac = TRUE; active_frac = SvNV(v); }
+		else if (strEQ(k, "cutoff"))    { have_cutoff = 1; cutoff = SvNV(v); }
+		else if (strEQ(k, "active_frac") || strEQ(k, "active")) { have_frac = 1; active_frac = SvNV(v); }
 		else if (strEQ(k, "active_side")) {
 			const char *sd = SvPV_nolen(v); // 'low'/'bottom' vs 'high'/'top'
 			frac_low = (sd[0] == 'l' || sd[0] == 'L' || sd[0] == 'b' || sd[0] == 'B');
@@ -40734,7 +40732,7 @@ PPCODE:
 		usage_croak(aTHX_ "roc", "the first two arguments must be array refs of scores and labels");
 	if (items % 2) usage_croak(aTHX_ "roc", "options must be key => value pairs");
 	SV *positive = NULL; //NULL: the default, "1"
-	NV conf_level = NV_CONF_95; bool lower_pos = FALSE;
+	NV conf_level = NV_CONF_95; bool lower_pos = 0;
 	for (Stack_off_t i = 2; i < items; i += 2) {
 		const char *k = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
 		if      (strEQ(k, "positive"))   positive = v;
@@ -40873,17 +40871,17 @@ PPCODE:
 	              || !SvROK(ST(1)) || SvTYPE(SvRV(ST(1))) != SVt_PVAV)
 		usage_croak(aTHX_ "bedroc", "the first two arguments must be array refs of scores and labels");
 	if (items % 2) usage_croak(aTHX_ "bedroc", "options must be key => value pairs"); //a dangling key used to be ignored
-	NV alpha = 20.0; SV *positive = NULL; bool lower_pos = FALSE; //positive NULL: the default, "1"
-	bool have_cutoff = FALSE, have_top = FALSE, have_frac = FALSE;
+	NV alpha = 20.0; SV *positive = NULL; bool lower_pos = 0; //positive NULL: the default, "1"
+	bool have_cutoff = FALSE, have_top = FALSE, have_frac = 0;
 	NV cutoff = 0.0, top = 0.0, active_frac = 0.0;
-	bool frac_low = FALSE;
+	bool frac_low = 0;
 	for (Stack_off_t i = 2; i < items; i += 2) {
 		const char *k = SvPV_nolen(ST(i)); SV *v = ST(i + 1);
 		if      (strEQ(k, "alpha"))     alpha = SvNV(v);
 		else if (strEQ(k, "positive"))  positive = v;
-		else if (strEQ(k, "cutoff"))    { have_cutoff = TRUE; cutoff = SvNV(v); }
-		else if (strEQ(k, "top") || strEQ(k, "fraction")) { have_top = TRUE; top = SvNV(v); }
-		else if (strEQ(k, "active_frac") || strEQ(k, "active")) { have_frac = TRUE; active_frac = SvNV(v); }
+		else if (strEQ(k, "cutoff"))    { have_cutoff = 1; cutoff = SvNV(v); }
+		else if (strEQ(k, "top") || strEQ(k, "fraction")) { have_top = 1; top = SvNV(v); }
+		else if (strEQ(k, "active_frac") || strEQ(k, "active")) { have_frac = 1; active_frac = SvNV(v); }
 		else if (strEQ(k, "active_side")) {
 			const char *sd = SvPV_nolen(v); //'low'/'bottom' vs 'high'/'top'
 			frac_low = (sd[0] == 'l' || sd[0] == 'L' || sd[0] == 'b' || sd[0] == 'B');
@@ -41121,7 +41119,7 @@ PPCODE:
 		hv_stores(k->st, "upper",    newRV_noinc((SV *)(k->hi = newAV())));
 		k->S = 1.0; k->vterm = 0.0; k->median = NV_NAN; k->median_S = 0.0;
 		k->n = k->events = k->d = k->c = k->block = 0;
-		k->median_on_half = k->var_undefined = FALSE;
+		k->median_on_half = k->var_undefined = 0;
 	}
 	for (size_t i = 0; i < N; i++) km[o[i].grp].n++;
 	for (size_t g = 0; g < G; g++) km[g].at_risk = km[g].n;
@@ -42058,7 +42056,7 @@ void p_adjust(...)
 					SV **c = av_fetch(row, j, 0);
 					SV *cell = c ? *c : NULL;
 					pa_hold(aTHX_ cell);
-					bool sel = TRUE;
+					bool sel = 1;
 					if (want) {
 						char kb[24];
 						I32 kl = (I32)snprintf(kb, sizeof kb, "%" IVdf, (IV)j);
@@ -42657,7 +42655,7 @@ void scale(...)
 					      (UV)r, (UV)len, (UV)ncol);
 				for (size_t c = 0; c < ncol; c++) {
 					SV *tv = av_slow_at(aTHX_ row_av, (SSize_t)c);
-					if (!tv) { na[r * ncol + c] = TRUE; x[r * ncol + c] = NV_NAN; continue; }
+					if (!tv) { na[r * ncol + c] = 1; x[r * ncol + c] = NV_NAN; continue; }
 					tv = sv_fetched(aTHX_ tv);
 					if (!sv_is_numeric_arg(aTHX_ tv))
 						croak("scale: non-numeric value at row %" UVuf ", column %" UVuf, (UV)r, (UV)c);
@@ -42691,13 +42689,13 @@ void scale(...)
 						SV *tv = av_slow_at(aTHX_ av, (SSize_t)j);
 						if (k == nrow) croak("%s", changed);
 						if (tv) x[k] = nv_arg_at(aTHX_ tv, "scale", (UV)j, (UV)i);
-						else { na[k] = TRUE; x[k] = NV_NAN; }
+						else { na[k] = 1; x[k] = NV_NAN; }
 						k++;
 					}
 				} else {
 					if (k == nrow) croak("%s", changed);
 					if (SvOK(arg)) x[k] = nv_arg(aTHX_ arg, "scale", (UV)i);
-					else { na[k] = TRUE; x[k] = NV_NAN; }
+					else { na[k] = 1; x[k] = NV_NAN; }
 					k++;
 				}
 			}
@@ -43331,8 +43329,8 @@ SV* rnorm(...)
 				else {
 					if (!SvOK(val) || !sv_is_numeric_arg(aTHX_ val))
 						usage_croak(aTHX_ "rnorm", "'%s' must be a number", key);
-					if (is_mean) { mean = SvNV(val); mean_set = TRUE; }
-					else         { sd   = SvNV(val); sd_set   = TRUE; }
+					if (is_mean) { mean = SvNV(val); mean_set = 1; }
+					else         { sd   = SvNV(val); sd_set   = 1; }
 				}
 				i += 2;
 				continue;
@@ -43340,8 +43338,8 @@ SV* rnorm(...)
 			if (!SvOK(ST(i)) || !sv_is_numeric_arg(aTHX_ ST(i)))
 				usage_croak(aTHX_ "rnorm", "argument %d is not a number", (int)i + 1);
 			if      (!n_sv)     n_sv = ST(i);
-			else if (!mean_set) { mean = SvNV(ST(i)); mean_set = TRUE; }
-			else if (!sd_set)   { sd   = SvNV(ST(i)); sd_set   = TRUE; }
+			else if (!mean_set) { mean = SvNV(ST(i)); mean_set = 1; }
+			else if (!sd_set)   { sd   = SvNV(ST(i)); sd_set   = 1; }
 			else usage_croak(aTHX_ "rnorm", "too many arguments (expected n, mean, sd)");
 			i++;
 		}
@@ -44520,7 +44518,7 @@ the fetched SV still carries the tied hash's element magic.*/
 					HE **entries;
 					HE  *entry;
 					size_t i = 0;
-					bool magic = FALSE; //a drawn value has get magic, so copying it runs user code
+					bool magic = 0; //a drawn value has get magic, so copying it runs user code
 	/*On the save stack, released at ITER_KEEP_END: copying a tied value can
 	die, and up to 0.3413 that leaked this array.*/
 					Newx(entries, count, HE *);
@@ -44537,7 +44535,7 @@ the fetched SV still carries the tied hash's element magic.*/
 						HE *tmp  = entries[i];
 						entries[i] = entries[j];
 						entries[j] = tmp;
-						if (SvGMAGICAL(HeVAL(entries[i]))) magic = TRUE;
+						if (SvGMAGICAL(HeVAL(entries[i]))) magic = 1;
 					}
  //Pre-size result hash to avoid rehashing during population
 					hv_ksplit(ret_hv, limit);
@@ -46049,10 +46047,10 @@ CODE:
 	for (size_t j = 0; j < p; j++) {
 		if (center) {
 			NV s = 0.0, comp = 0.0; //compensated, for the long double colMeans() adds in
-			bool constant = TRUE; //every cell equals the first
+			bool constant = 1; //every cell equals the first
 			for (size_t i = 0; i < n; i++) {
 				nv_two_sum(&s, &comp, X_mat[i * p + j]);
-				if (X_mat[i * p + j] != X_mat[j]) constant = FALSE;
+				if (X_mat[i * p + j] != X_mat[j]) constant = 0;
 			}
 			cen_vec[j] = (s + comp) / n; //finite: pc_num() dropped every non-finite cell
 			/*R's colMeans() sums and divides in long double, so a constant
@@ -46192,7 +46190,7 @@ CODE:
  //keeps its keys behind FIRSTKEY/NEXTKEY and so just skips the pre-size
 		const IV nrows  = (IV)HvUSEDKEYS(in_hv);
 		HE      *he_row;
-		bool     first_row = TRUE; //the columns this row opens are the ones pre-sized; see below
+		bool     first_row = 1; //the columns this row opens are the ones pre-sized; see below
 		retval_sv = sv_2mortal(newRV_noinc((SV *)out_hv));
 		ITER_KEEP_BEGIN(in_hv);
 		hv_iterinit(in_hv);
@@ -46281,7 +46279,7 @@ CODE:
 				}
 			}
 			ITER_KEEP_END;
-			first_row = FALSE;
+			first_row = 0;
 		}
 		ITER_KEEP_END;
 	} else if (ref_type == SVt_PVAV) { // Array-of-Arrays
@@ -47674,7 +47672,7 @@ SV* density(...)
 		bool *isna = NULL; //no restrict: also held, and freed, through B->isna
 		dens_bufs *B = NULL;
 		const char *err = NULL;
-		bool err_usage = FALSE; //err is about an argument's form, so density's help screen goes with it
+		bool err_usage = 0; //err is about an argument's form, so density's help screen goes with it
 		char errbuf[256];
 		size_t N0 = 0, N = 0, nx = 0, nna = 0, n = 0, n_user = 0, m = 0;
 		NV bw = 0.0, totMass = 1.0, wsum = 0.0;
@@ -47722,7 +47720,7 @@ SV* density(...)
 		if (has_wts) {
 			AV *wav;
 			if (!SvROK(w_sv) || SvTYPE(SvRV(w_sv)) != SVt_PVAV) {
-				err = "'weights' must be an array reference"; err_usage = TRUE;
+				err = "'weights' must be an array reference"; err_usage = 1;
 				goto dens_cleanup;
 			}
 			wav = (AV *)SvRV(w_sv);
@@ -47823,12 +47821,12 @@ SV* density(...)
 				bw = SvNV(width_sv) / dens_width_factor(kernel);
 			} else {
 				bw_rule = dens_match_bw(SvPV_nolen(width_sv));
-				if (bw_rule < 0) { err = "unknown bandwidth rule"; err_usage = TRUE; goto dens_cleanup; }
+				if (bw_rule < 0) { err = "unknown bandwidth rule"; err_usage = 1; goto dens_cleanup; }
 				bw_is_rule = 1;
 			}
 		} else if (bw_sv && !looks_like_number(bw_sv)) {
 			bw_rule = dens_match_bw(SvPV_nolen(bw_sv));
-			if (bw_rule < 0) { err = "unknown bandwidth rule"; err_usage = TRUE; goto dens_cleanup; }
+			if (bw_rule < 0) { err = "unknown bandwidth rule"; err_usage = 1; goto dens_cleanup; }
 			bw_is_rule = 1;
 		} else if (bw_sv) {
 			bw = SvNV(bw_sv);

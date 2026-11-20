@@ -143,7 +143,8 @@ options:
                        perl series none of them comes from, then exit
       --no-install     skip "make install" (build + test only)
       --no-clean       skip "make clean" before each version
-      --deps           cpanm any missing PREREQ_PM for that perl first
+      --deps           cpanm --installdeps . for that perl first, which installs
+                       any prerequisite that is missing or below its minimum
       --stop-on-fail   abort at the first version that fails (with -P: launch
                        no more perls; the running ones finish)
   -P, --parallel [N]   build and test N perls at once, each in a private copy of
@@ -527,21 +528,6 @@ sub run_cmd {
 	return ($code, \@lines);
 }
 
-# PREREQ_PM names, scraped from Makefile.PL so this stays in sync with dist.ini.
-sub prereqs {
-	open my $fh, '<', 'Makefile.PL' or return ();
-	local $/;
-	my $src = <$fh>;
-	close $fh;
-	# TEST_REQUIRES as well as PREREQ_PM: Test::Exception and Test::LeakTrace
-	# live there, and reading PREREQ_PM alone left --deps installing neither,
-	# so a newly built perl failed 131 test files on "Can't locate".
-	my @blocks = $src =~ /"(?:PREREQ_PM|TEST_REQUIRES|BUILD_REQUIRES)"\s*=>\s*\{(.*?)\}/sg;
-	my %seen;
-	return grep { !$seen{$_}++ } map { /"([\w:]+)"\s*=>/g } @blocks;
-}
-my @prereqs = prereqs();
-
 # ------------------------------------------------------------ build one perl --
 
 # Build, test and install the distribution in the current directory with one
@@ -597,18 +583,19 @@ sub build_one {
 	$r{reported} = $vc == 0 && @$vout ? do { my $s = $vout->[0]; chomp $s; $s } : '?';
 
 	my @steps;
-	if ($deps && @prereqs) {
-		my @missing;
-		for my $mod (@prereqs) {
-			my ($c) = run_cmd([$perl, "-M$mod", '-e', '1'], $logfh);
-			push @missing, $mod if $c != 0;
-		}
-		if (@missing) {
-			my $cpanm = -x File::Spec->catfile($bin, 'cpanm')
-				? File::Spec->catfile($bin, 'cpanm')
-				: File::Spec->catfile($PERLBREW_ROOT, 'bin', 'cpanm');
-			push @steps, ['deps', [$perl, $cpanm, '--notest', @missing]];
-		}
+	# cpanm reads the prerequisites from the MYMETA that Makefile.PL writes,
+	# rather than from a scrape of Makefile.PL.  The scrape this replaces
+	# checked each module with -MModule, which ignores the minimum version, so a
+	# fresh 5.10 (core Scalar::Util 1.21) passed it against PREREQ_PM's 1.22.
+	# --notest skips the prerequisites' own test suites, not the test phase of
+	# the root target: cpanm 1.7049 sets want_phases to build, test and runtime
+	# for an --installdeps root, so TEST_REQUIRES (Test::Exception,
+	# Test::LeakTrace) still installs.
+	if ($deps) {
+		my $cpanm = -x File::Spec->catfile($bin, 'cpanm')
+			? File::Spec->catfile($bin, 'cpanm')
+			: File::Spec->catfile($PERLBREW_ROOT, 'bin', 'cpanm');
+		push @steps, ['deps', [$perl, $cpanm, '--notest', '--installdeps', '.']];
 	}
 
 	if ($clean && -f 'Makefile') {

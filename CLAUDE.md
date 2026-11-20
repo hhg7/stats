@@ -388,6 +388,13 @@ Windows:
   `system()` go through `cmd.exe`, which does not treat `'` as a quote. Use
   list-form `system()`, put the program in a file, and pass paths in `@ARGV`.
   `t/arg.crash.regressions.t` is the worked example (learned in 0.317).
+- A test never compares a byte count on disk (`-s`, `stat`) with the length of
+  text that went through a text-mode handle: `:crlf` writes each `\n` as
+  `\r\n` and reads it back as one byte, so the two differ by one per line.
+  Read the file back through the same layers and compare the text, or open
+  both ends `:raw`. Chem::Structure::Parser 0.040 failed on every Strawberry
+  smoker this way. `-s` as a non-empty check, or against the same file's own
+  earlier size, is fine.
 
 Solaris, illumos and the BSDs:
 
