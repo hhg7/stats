@@ -125,8 +125,8 @@ sub mk {
 	           [ 'x&#38;lt;y', 'p&amp;q &#x41;&#233; &#999999999999; &bad' ]);
 	my $book = read_table($f);
 	is_deeply( [ sort keys %$book ],
-		[ "p&q A\xc3\xa9 &#999999999999; &bad", 'x&lt;y' ],
-		'sheet names: each reference decoded once, UTF-8 bytes for a number, '
+		[ "p&q A\x{e9} &#999999999999; &bad", 'x&lt;y' ],
+		'sheet names: each reference decoded once, a character for a number, '
 		. 'and an out-of-range or unknown one left as it is' );
 	is_deeply( $book->{'x&lt;y'}, [ { a => 1 } ], 'sheet names: the sheet is read under it' );
 	is_deeply( read_table($f, sheet => 'x&lt;y'), [ { a => 1 } ],
@@ -193,10 +193,9 @@ sub mk {
 	         .            '<c r="B5" t="inlineStr"><is><t>&#x7F;</t></is></c></row>');
 	my $rows = read_table($f);
 	is( $rows->[0]{'h&1'}, " a <b> ", 'lt/gt decoded, xml:space="preserve" kept' );
-	# UTF-8 bytes, because read_table hands the file back as bytes and does not
-	# decode it: e-acute is C3 A9 and U+4E2D is E4 B8 AD.
-	is( $rows->[0]{h2}, "\xc3\xa9\xe4\xb8\xad&",
-		'decimal and hex numeric character references become UTF-8 bytes' );
+	# characters, since 0.3426: U+00E9 and U+4E2D, not their UTF-8 bytes
+	is( $rows->[0]{h2}, "\x{e9}\x{4e2d}&",
+		'decimal and hex numeric character references become characters' );
 	is( $rows->[1]{'h&1'}, '&lt;',
 		'&amp;lt; decodes once, to &lt; and not to <' );
 	is( $rows->[1]{h2}, 'q"\'x', 'quot and apos decoded' );
@@ -594,16 +593,16 @@ sub inline_rows {
 	is_deeply( read_table($f, sheet => 2),   [ { s => 'first' } ],  '... and sheet => 2 the one named 2' );
 	is_deeply( read_table($f), { 2 => [ { s => 'first' } ], 1 => [ { s => 'second' } ] },
 		'the whole book does not swap them' );
-	# A name the caller holds as characters is compared as the UTF-8 bytes the
-	# workbook's name was read as (up to 0.3213 it was never found, and the
-	# message printed it as Latin-1).
+	# A name the caller holds as characters is compared with the characters the
+	# workbook's name is read as (up to 0.3213 it was never found, and the
+	# message printed it as Latin-1; up to 0.3425 it was compared as bytes).
 	$f = mk(\@body, undef, [ "Donn\xc3\xa9es", 'Other' ]);
 	my $chars = "Donn\x{e9}es";
 	utf8::upgrade($chars);
 	is_deeply( read_table($f, sheet => $chars), [ { s => 'first' } ], 'a sheet name given as characters' );
 	is_deeply( read_table($f, sheet => "Donn\xc3\xa9es"), [ { s => 'first' } ], '... and as UTF-8 bytes' );
 	throws_ok { read_table($f, sheet => 'Nope') }
-		qr/^read_table: sheet 'Nope' not found in \Q$f\E \(have: 'Donn\xc3\xa9es', 'Other'\)$/,
+		qr/^read_table: sheet 'Nope' not found in \Q$f\E \(have: 'Donn\x{e9}es', 'Other'\)$/,
 		'an unknown sheet name lists the ones there are';
 }
 
