@@ -1,5 +1,20 @@
 Revision history for Stats-LikeR
 
+0.3427 2026-11-20 CST (Claude Opus 5.5 helped)
+
+ [Tests]
+
+ - t/write_table.oracle.R.python.t failed 120 of its 323 subtests, every
+   ".csv/.tsv is the file the readers read" check, on both of 0.3426's
+   MSWin32 reports (Strawberry Perl 5.24.4 and 5.42.3), the only failures
+   among its 65 reports. The test was at fault, not the module:
+   write_table() ends each row CR LF where perl is a CRLF shop, as it has
+   since 0.3418, but the test compared the file with the bytes frozen on
+   Linux, whose rows end LF. It now expects CR LF at the two row ends
+   there and nowhere else, since an LF inside a quoted field is written
+   as it is. A build with the row end forced to CR LF fails the same 120
+   subtests with the old test and passes with the new one.
+
 0.3426 2026-11-19 CST (Claude Opus 5.5 helped)
 
  [Behavior change: read_table() of an .xlsx]

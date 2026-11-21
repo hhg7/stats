@@ -27,7 +27,8 @@
 #   %golden  the bytes write_table wrote: each .csv and .tsv whole, and the
 #            <c r="A2"> element of the workbook's sheet1.xml (undef when the
 #            cell was left out).  What the readers saw holds for these bytes,
-#            so the test writes each case again and requires the same bytes.
+#            so the test writes each case again and requires the same bytes,
+#            but for the row ends, which are CR LF on Windows (with_row_ends).
 #            When an intended change to write_table changes them, re-run the
 #            generator, and review what the readers now see.
 #   %read    every reading that is not the value written: keyed
@@ -585,6 +586,34 @@ sub cell_a2 {
 }
 
 my $dir = File::Temp->newdir;
+
+# The row end write_table writes: "\r\n" where perl is a CRLF shop (Windows),
+# which is where a '>' open gets :crlf, and "\n" elsewhere (WT_EOL in
+# LikeR.xs). The probe is the one t/write_table.quoting.t uses.
+my $NL = do {
+	open my $fh, '>', "$dir/nl.probe" or die "cannot write a probe: $!";
+	my $crlf = grep { $_ eq 'crlf' } PerlIO::get_layers($fh);
+	close $fh;
+	$crlf ? "\x0D\x0A" : "\x0A";
+};
+# The bytes of a frozen .csv or .tsv as write_table writes them here. %golden
+# was written on Linux, so its two rows end in LF; only those two row ends
+# change, since an LF inside a quoted field ('LF inside', 'CRLF inside') is
+# written as it is (the handle is binary). 0.3426 compared the LF bytes on
+# MSWin32 too and failed the 120 .csv and .tsv subtests on both of its Windows
+# reports. The header "v<sep>w" holds no LF, so its row end is the first LF and
+# the data row's is the last byte. By index and substr, not a regex, for the
+# lone surrogate (see esc_text).
+sub with_row_ends {
+	my ($g) = @_;
+	return $g if $NL eq "\x0A";
+	my $h = index $g, "\x0A";
+	die "a frozen file is not two LF-terminated rows" unless $h > 0 && substr($g, -1) eq "\x0A";
+	substr($g, -1, 1, $NL);	# the last first, so that $h still points at the first
+	substr($g, $h, 1, $NL);
+	return $g;
+}
+
 my %label_of;
 for my $i (0 .. $#case) {
 	my $label = $case[$i][0];
@@ -596,8 +625,8 @@ for my $i (0 .. $#case) {
 	}
 	my @warn = write_case($dir, $i);
 	is(scalar @warn, 0, "'$label': written without a warning") or diag(@warn);
-	is(slurp_raw("$dir/$i.csv"), $g->{csv}, "'$label': the .csv is the file the readers read");
-	is(slurp_raw("$dir/$i.tsv"), $g->{tsv}, "'$label': the .tsv is the file the readers read");
+	is(slurp_raw("$dir/$i.csv"), with_row_ends($g->{csv}), "'$label': the .csv is the file the readers read");
+	is(slurp_raw("$dir/$i.tsv"), with_row_ends($g->{tsv}), "'$label': the .tsv is the file the readers read");
 	is(cell_a2("$dir/$i.xlsx"), $g->{xlsx}, "'$label': the .xlsx cell is the one the readers read");
 }
 is(scalar(grep { !$label_of{$_} } keys %golden), 0, 'every frozen output is a case of @case');
