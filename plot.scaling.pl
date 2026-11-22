@@ -299,12 +299,11 @@ sub fixture_files {
 # table in memory to write a file that is only being written so it can be read.
 my $XLSX_EPOCH = 946_684_800;	# 2000-01-01 UTC
 
-# The zip's own per-member timestamp is the one byte-level difference between
-# two machines: DOS times are local, so a fixed epoch still records the
-# writer's timezone.  Nothing reads it, and the three languages always read the
-# copy written on the machine they are running on, so it costs nothing -- but
-# it does mean the .xlsx is only reproducible byte for byte within a timezone,
-# where the .csv and .tsv are reproducible everywhere.
+# The zip's per-member timestamp is a DOS time, which is local:
+# IO::Compress::Zip converts Time through localtime(), so the same epoch written
+# under TZ=UTC and TZ=America/Chicago differs at byte 12 of the file.
+# write_fixtures() therefore runs under TZ=UTC, which makes the .xlsx as
+# reproducible byte for byte as the .csv and .tsv.
 my @xlsx_parts = (
 	'[Content_Types].xml' =>
 		'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -392,6 +391,13 @@ sub xlsx_close {
 
 sub write_fixtures {
 	File::Path::make_path($dir) unless -d $dir;
+
+	# The .xlsx timestamps are local time; see the comment above @xlsx_parts.
+	# local restores TZ for the --weigh children started later, but libc keeps
+	# UTC until the next tzset(), which is harmless because nothing after this
+	# point formats a local time.
+	local $ENV{TZ} = 'UTC';
+	POSIX::tzset();
 
 	my @cat1 = qw(A B C);
 	my @cat2 = qw(X Y);
@@ -937,13 +943,15 @@ sub measure {
 		open my $saved_out, '>&', \*STDOUT or POSIX::_exit(1);
 		open STDOUT, '>', File::Spec->devnull() or POSIX::_exit(1);
 
-		# untimed: page faults, allocator, page cache, and a broken call
-		my $ok  = eval { $code->($input); 1 };
-		my $err = $ok ? '' : $@;
+		# Every call is inside the eval, not only the first.  A die outside it
+		# would end this child with nothing sent down the pipe, so the parent
+		# could only say the child died, and the reason would reach the terminal
+		# without the function and size it belongs to.
+		my ($secs, $reps) = (0, 1);
+		my $ok = eval {
+			# untimed: page faults, allocator, page cache, and a broken call
+			$code->($input);
 
-		my $secs = 0;
-		my $reps = 1;
-		if ($ok) {
 			# A second untimed call, this one clocked, sizes the repeat count.
 			# The first cannot: it carries the fork's page faults, so it reads
 			# five to ten times high and would choose far too few repeats.
@@ -956,7 +964,9 @@ sub measure {
 			my $start = Time::HiRes::time();
 			$code->($input) for 1 .. $reps;
 			$secs = (Time::HiRes::time() - $start) / $reps;
-		}
+			1;
+		};
+		my $err = $ok ? '' : $@;
 		$err =~ s/\s+/ /g;
 
 		open STDOUT, '>&', $saved_out or POSIX::_exit(1);
@@ -1084,6 +1094,9 @@ sub weigh_one {
 	}
 
 	open STDOUT, '>&', $saved_out or die "cannot restore STDOUT: $!\n";
+	# The parent records a failed weighing as NA, so the reason is said here or
+	# nowhere.
+	print STDERR "--weigh: $group $name at n=$n died: $@" unless $ok;
 	print +($ok && defined $before && defined $after ? $after - $before : ''), "\n";
 	return;
 }
