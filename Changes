@@ -1,6 +1,6 @@
 Revision history for Stats-LikeR
 
-0.3429 2026-11-22 CST (Claude Opus 5.5 helped)
+0.3429 2026-11-23 CST 
 
  [Bug fixes]
 
@@ -48,8 +48,9 @@ Revision history for Stats-LikeR
    levels is practical; several are one dense matrix, factored at every
    IRLS step, which is quick at 71 random effects and took 13 minutes at
    584 (grouseticks' three crossed factors), where lme4's sparse Cholesky
-   takes about a second. As in lme4 (glFormula's allow.n), a grouping
-   factor may have a level per row.
+   takes about a second; more than 1000 croaks (lmer() takes 4000). As in
+   lme4 (glFormula's allow.n), a grouping factor may have a level per
+   row.
  - The estimates are those of a tightly converged lme4, which lme4's
    defaults are not: its penalized IRLS stops on a relative change of
    1e-7 in the penalized deviance, which leaves cbpp's log-likelihood
@@ -164,7 +165,7 @@ Revision history for Stats-LikeR
  - t/pnorm.t checked that pnorm(-40) is 0, which is true only of a double;
    it now checks pnorm(-200), which underflows on every NV.
 
-0.3428 2026-11-22 CST (Claude Opus 5.5 helped)
+0.3428 2026-11-22 CST 
 
  [Behavior change: rank() of strings]
 
@@ -522,7 +523,7 @@ Revision history for Stats-LikeR
    t/write_table.compressed.pandas.t and t/write_table.tex.stream.t that a
    croaking write leaves no file.
 
-0.3427 2026-11-20 CST (Claude Opus 5.5 helped)
+0.3427 2026-11-20 CST 
 
  [Tests]
 
@@ -537,7 +538,7 @@ Revision history for Stats-LikeR
    as it is. A build with the row end forced to CR LF fails the same 120
    subtests with the old test and passes with the new one.
 
-0.3426 2026-11-19 CST (Claude Opus 5.5 helped)
+0.3426 2026-11-19 CST 
 
  [Behavior change: read_table() of an .xlsx]
 
@@ -783,7 +784,7 @@ Revision history for Stats-LikeR
    written; t/read_table.xlsx.blank_rows.pandas.py checks that pandas
    reads them so.
 
-0.3425 2026-11-18 CST (Claude Opus 5.5 helped)
+0.3425 2026-11-18 CST 
 
  [Data frames]
 
@@ -859,7 +860,7 @@ Revision history for Stats-LikeR
    in "melt: row 1 is not a HASH reference", instead of with perl's
    "Not a HASH reference" from a line of LikeR.pm.
 
-0.3424 2026-11-16 CST (Claude Opus 5.5 helped)
+0.3424 2026-11-16 CST 
 
  [read_table()]
 
@@ -916,7 +917,7 @@ Revision history for Stats-LikeR
    array's length has changed, instead of skipping the element or
    reading a different number of values and dividing by the first count.
 
-0.3423 2026-11-15 CST (Claude Opus 5.5 helped)
+0.3423 2026-11-15 CST 
 
  [Distribution]
 
@@ -988,7 +989,7 @@ Revision history for Stats-LikeR
  - aoh2hoh()'s errors for a row that is no hash and for a missing key
    now name the function, as its other errors do.
 
-0.3422 2026-11-13 CST (Claude Fable 5.2 helped)
+0.3422 2026-11-13 CST
 
  [view()]
 
@@ -1185,7 +1186,7 @@ Revision history for Stats-LikeR
    cfilter()'s regex selector and read_table()'s qr// separator match
    in C, where there is no such rule, and are unchanged.
 
-0.3421 2026-11-13 CST (Claude Fable 5.2 helped)
+0.3421 2026-11-13 CST
 
  [qnorm(), qt(), qchisq()]
 
@@ -1225,7 +1226,7 @@ Revision history for Stats-LikeR
    TestMode, and inputs on both sides of each point where the count
    array grows, with leak checks, one of them through a croak.
 
-0.342 2026-11-10 CST (Claude Fable 5.2 helped)
+0.342 2026-11-10 CST
 
  [Out-of-memory guards: 11 failing reports of 0.3419]
 
@@ -1260,7 +1261,7 @@ Revision history for Stats-LikeR
    every machine; against a probe that always says yes they exit with
    "Out of memory". t/alloc.guards.t now has 23 subtests.
 
-0.3419 2026-11-10 CST (Claude Fable 5.2 helped)
+0.3419 2026-11-10 CST
 
  [lm(), glm() and the formula models]
 
@@ -1584,7 +1585,7 @@ Revision history for Stats-LikeR
    installed 0.3418 fails the same subtests, and with this change all
    three pass.
 
-0.3418 2026-11-08 CST (Claude Opus 5.5 helped)
+0.3418 2026-11-08 CST 
 
  [read_table(), write_table()]
 
@@ -1609,7 +1610,7 @@ Revision history for Stats-LikeR
    the smoker did; this build passes all of them but the row-end check,
    which needs a perl built with PERLIO_USING_CRLF.
 
-0.3417 2026-11-07 CST (Claude Opus 5.5 helped)
+0.3417 2026-11-07 CST 
 
  [read_table()]
 
@@ -1657,7 +1658,7 @@ Revision history for Stats-LikeR
    one non-literal format, the NV helper that keeps gcc from misreading
    quadmath's %Qg, now says so to the compiler.
 
-0.3416 2026-11-05 CST (Claude Opus 5.5 helped)
+0.3416 2026-11-05 CST 
 
  [dunn_test()]
 
@@ -1698,7 +1699,7 @@ Revision history for Stats-LikeR
    recorded in statsmodels' test suite, and checks each way of raising
    the "Chi-squared approximation may be incorrect" warning.
 
-0.3415 2026-11-04 CST (Claude Opus 5.5 helped)
+0.3415 2026-11-04 CST 
 
  [Windows: build]
 
@@ -1716,7 +1717,7 @@ Revision history for Stats-LikeR
    threaded perl's headers. Against 0.3414 that reports the smoker's error
    and nothing else.
 
-0.3414 2026-11-02 CST (Claude Opus 5.5 helped)
+0.3414 2026-11-02 CST 
 
  [Distribution metadata]
 
@@ -2017,7 +2018,7 @@ Revision history for Stats-LikeR
    INFINITY, and formats row numbers with perl's UVuf rather than a C
    "%lu", which is 32 bits wide on Windows.
 
-0.3413 2026-10-29 CDT (Claude Opus 5.5 helped)
+0.3413 2026-10-29 CDT 
 
  [Build: gcc 13 and 14 at -O3]
 
@@ -2042,7 +2043,7 @@ Revision history for Stats-LikeR
    0.3412. None of them miscompiles under gcc 13 or 14 at -O3 here, but each
    has the shape that did, and the next gcc need not spare them.
 
-0.3412 2026-10-29 CDT (Claude Opus 5.5 helped)
+0.3412 2026-10-29 CDT 
 
  [Build: gcc 15.2.0]
 
@@ -2057,7 +2058,7 @@ Revision history for Stats-LikeR
    back from it to nu; the arithmetic is R's as before. The fault was
    reproduced with the function extracted, on Compiler Explorer's gcc 15.2.
 
-0.3411 2026-10-28 CDT (Claude Opus 5.5 helped)
+0.3411 2026-10-28 CDT 
 
  [Build]
 
@@ -2085,7 +2086,7 @@ Revision history for Stats-LikeR
    from perl's own %g rather than hardcoding it, since that message is
    formatted by perl and reads 1e+007 on the same perls.
 
-0.341 2026-10-26 CDT (Claude Opus 5.5 helped)
+0.341 2026-10-26 CDT 
 
  [write_table: workbooks of several worksheets]
 
@@ -2198,7 +2199,7 @@ Revision history for Stats-LikeR
    call, measured on 4 million calls of mean() of three numbers and
    dftype(); a call doing real work does not show it.
 
-0.34 2026-10-21 CDT (Claude Opus 5.5 helped)
+0.34 2026-10-21 CDT 
 
  [New function: dftype]
 
@@ -2230,7 +2231,7 @@ Revision history for Stats-LikeR
    is left where it was instead of being reset. A tied hash's still is, as
    the walk has to call its FIRSTKEY.
 
-0.331 2026-10-20 CDT (Claude Opus 5.5 helped)
+0.331 2026-10-20 CDT 
 
  [survfit(), logrank_test() and coxph()]
 
@@ -2819,7 +2820,7 @@ Revision history for Stats-LikeR
    the rounding warning, the croaks for bad cells and counts, the all-zero
    tables, chisq_test's cell names and the leaks.
 
-0.33 2026-10-17 CDT (Claude Opus 5.5 helped)
+0.33 2026-10-17 CDT 
 
  [usage]
  - when given an incorrect series of arguments, a menu resembling the help
@@ -2870,7 +2871,7 @@ Revision history for Stats-LikeR
  - t/help.t checks that df2h has a documentation section of its own, and
    that h('aoh2h') shows it.
 
-0.3218 2026-10-16 CDT (Claude Opus 5.5 helped)
+0.3218 2026-10-16 CDT 
 
  [read_table()]
 
@@ -3185,7 +3186,7 @@ Revision history for Stats-LikeR
    t/vif_hoslem.t passes a one-sided formula where it passed a response
    its data did not have, and expects car's "fewer than 2 terms".
 
-0.3217 2026-10-12 CDT (Claude Opus 5.5 helped)
+0.3217 2026-10-12 CDT 
 
  [cor()]
 
@@ -3600,7 +3601,7 @@ Revision history for Stats-LikeR
    t/friedman_mcnemar_prop_cmh.R.t gains R 4.6.1 rows for the cmh_test(),
    mcnemar_test() and prop_test() cases.
 
-0.3216 2026-10-09 CDT (Claude Opus 5.5 helped)
+0.3216 2026-10-09 CDT 
 
  [merge()]
 
@@ -3621,7 +3622,7 @@ Revision history for Stats-LikeR
    columns are now filled in blocks of 1024 rows, which keeps a HoA input
    at its old speed and each output column's values together in memory.
 
-0.3215 2026-10-06 CDT (Claude Opus 5.5 helped)
+0.3215 2026-10-06 CDT 
 
  [read_table(): Excel workbooks]
 
@@ -7433,9 +7434,8 @@ Revision history for Stats-LikeR
 
  [Correctness and portability fixes]
 
- - Nine defects found by cross-validating against R 4.6.1 and mpmath, by running
-   the suite under UBSan and AddressSanitizer, and by reading for the conventions
-   in `CLAUDE.md`. Each is pinned by a test that fails without the fix:
+ - 9 defects found by cross-validating against R 4.6.1 and mpmath, by running
+   the suite under UBSan and AddressSanitizer. Each is pinned by a test that fails without the fix:
    `t/cor_test.spearman.R.t`, `t/pt_qt.tails.R.t`, `t/minmax.nan.R.t`,
    `t/var_test.ci.R.t` and `t/portability.bugs.t`.
 
@@ -7862,8 +7862,7 @@ Revision history for Stats-LikeR
  - 1,495 lines that were nothing but a comment marker and a run of dashes, and 380
    comments whose text trailed off into one, are gone from `LikeR.xs`,
    `lib/Stats/LikeR.pm` and `t/`. `/* ===== WILCOXON EXACT NULL DISTRIBUTIONS =====`
-   is now `/* WILCOXON EXACT NULL DISTRIBUTIONS`, which is what the house style in
-   `CLAUDE.md` asks for anyway. Nothing after `__DATA__` was touched, no POD
+   is now `/* WILCOXON EXACT NULL DISTRIBUTIONS`. Nothing after `__DATA__` was touched, no POD
    region, and no line holding a `/*` or `*/` was deleted, so no comment can have
    been left unterminated. The suite is unchanged at 28,485 tests either side of it.
 

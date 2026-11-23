@@ -311,6 +311,21 @@ SKIP: {
 	check('grouse_full', glmer(formula => 'TICKS ~ YEAR + cHEIGHT + (1 | BROOD) + (1 | INDEX) + (1 | LOCATION)',
 		data => $gt, family => 'poisson'), 403);
 }
+{
+	# The dense path's cap is this module's own, not lme4's: 1000 random
+	# effects for glmer() (lmer() takes 4000), since glmer() refactors at every
+	# PIRLS step. 600 + 401 crossed levels is one over; the check is made
+	# before any fitting, so this costs nothing.
+	my %big;
+	for my $i (0 .. 1199) {
+		push @{ $big{y} }, $i % 3;
+		push @{ $big{a} }, 'a' . ($i % 600);
+		push @{ $big{b} }, 'b' . (int($i / 2) % 401);
+	}
+	eval { glmer(formula => 'y ~ 1 + (1 | a) + (1 | b)', data => \%big, family => 'poisson') };
+	like($@, qr/^glmer: 1001 random effects over more than one grouping factor is more than the dense method takes \(at most 1000;/,
+		'glmer refuses more than 1000 crossed random effects before fitting');
+}
 my $ep = read_csv('glmer.epil.csv');
 check('epil_pois', glmer(formula => 'y ~ Base * trt + Age + Visit + (Visit | subject)', data => $ep, family => 'poisson'), 236);
 diag(sprintf('worst relative disagreement, %s: %.3g (%s)', $_, $worst{$_}, $worst_at{$_})) for sort keys %worst;

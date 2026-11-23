@@ -21013,6 +21013,7 @@ static NV lmm_vcov_fn(LmmModel *m, const NV *vp, void *ctx) {
 split into its fixed part and its random-effects terms, the rows read, and
 lme4's identifiability checks made.  Every allocation is on the save stack.*/
 #define LMM_MAX_RE 64 //random-effects terms in one formula; the arrays below are sized by it
+#define LMM_SINGULAR_TOL 1e-4 //lme4 2.0-6 getSingTol() (R/utilities.R): a theta below it in size is a "singular fit"
 typedef struct {
 	MfRows   R;
 	MfPart   PF; //the fixed part
@@ -21037,7 +21038,7 @@ effects as there are rows, as glFormula() allows them.*/
 static void lmm_frame(pTHX_ const char *restrict fname, const char *restrict formula, SV *data_sv,
                       SV *offset_sv, SV *weights_sv, bool allow_n, LmmFrame *restrict f) {
 	char *fixed_f;
-	size_t nre = 0, i, n = 0, p, nlev_tot = 0;
+	size_t nre = 0, n = 0, p, nlev_tot = 0;
 	GlmVarSpec off_spec, w_spec;
 	NV *OFF, *WT = NULL, ldW = 0.0;
 	char *re_expr[LMM_MAX_RE], *re_group[LMM_MAX_RE];
@@ -21160,28 +21161,28 @@ static void lmm_frame(pTHX_ const char *restrict fname, const char *restrict for
 			Newx(LV[k], R.n ? R.n : 1, size_t); SAVEFREEPV(LV[k]);
 			maps[k] = (HV *)sv_2mortal((SV *)newHV());
 		}
-		for (i = 0; i < R.n; i++) {
+		for (size_t i = 0; i < R.n; i++) {
 			NV y = evaluate_term(aTHX_ R.data_hoa, R.row_hashes, (unsigned)i, PF.lhs), off = 0.0, wt = 1.0;
 			bool ok = !nv_isnan(y);
 			size_t lv[LMM_MAX_RE];
-			if (ok && !mf_row(aTHX_ &PF, &R, i, X + n * p, &off)) ok = 0;
+			if (ok && !mf_row(aTHX_ &PF, &R, i, X + n * p, &off)) ok = FALSE;
 			if (ok && (off_spec.col || off_spec.av)) {
 				const NV o2 = glm_var_num(aTHX_ &off_spec, R.data_hoa, R.row_hashes, i);
-				if (nv_isnan(o2)) ok = 0;
+				if (nv_isnan(o2)) ok = FALSE;
 				off += o2;
 			}
 			if (ok && WT) {
 				wt = glm_var_num(aTHX_ &w_spec, R.data_hoa, R.row_hashes, i);
-				if (nv_isnan(wt)) ok = 0;
+				if (nv_isnan(wt)) ok = FALSE;
 				else if (wt < 0.0 || !nv_isfinite(wt)) croak("%s: weights must be finite and non-negative", fname);
 				/*A zero weight drops the row, as glm() does: lme4 keeps it,
 				and its criterion subtracts log 0 and is infinite.*/
-				else if (wt == 0.0) ok = 0;
+				else if (wt == 0.0) ok = FALSE;
 			}
 			for (size_t k = 0; ok && k < nre; k++) {
 				char *g = re_group[k], *part, *e, buf[4096];
 				size_t len = 0;
-				if (!mf_row(aTHX_ &PR[k], &R, i, ZR[k] + n * PR[k].p, NULL)) { ok = 0; break; }
+				if (!mf_row(aTHX_ &PR[k], &R, i, ZR[k] + n * PR[k].p, NULL)) { ok = FALSE; break; }
 				// the grouping factor's label, a:b joined
 				part = g;
 				while (ok && part) {
@@ -21190,7 +21191,7 @@ static void lmm_frame(pTHX_ const char *restrict fname, const char *restrict for
 					if (e) { save = *e; *e = '\0'; }
 					s = get_data_string_alloc(aTHX_ R.data_hoa, R.row_hashes, i, part);
 					if (e) *e = save;
-					if (!s) { ok = 0; break; }
+					if (!s) { ok = FALSE; break; }
 					if (len + strlen(s) + 2 > sizeof buf) { Safefree(s); croak("%s: grouping label too long", fname); }
 					if (len) buf[len++] = '\x1f';
 					memcpy(buf + len, s, strlen(s)); len += strlen(s);
@@ -21232,10 +21233,10 @@ static void lmm_frame(pTHX_ const char *restrict fname, const char *restrict for
 	{
 		SV *bad = NULL;
 		for (size_t k = 0; k < nre; k++) {
-			bool seen = 0;
+			bool seen = FALSE;
 			if (NL[k] < n || (allow_n && NL[k] == n)) continue; //lme4's checkNlevels(allow.n)
 			for (size_t k2 = 0; k2 < k; k2++)
-				if (strEQ(re_group[k2], re_group[k])) { seen = 1; break; }
+				if (strEQ(re_group[k2], re_group[k])) { seen = TRUE; break; }
 			if (seen) continue;
 			if (!bad) bad = sv_2mortal(newSVpv(re_group[k], 0));
 			else sv_catpvf(bad, ", %s", re_group[k]);
@@ -21268,8 +21269,11 @@ static void lmm_frame(pTHX_ const char *restrict fname, const char *restrict for
 and each block's Z'Z, Z'X and Z'y allocated, zero, for lmm_fill(); the scratch
 the evaluations need; *single is TRUE when one grouping factor serves every
 term, so that M is block diagonal by its levels, and toff[k] is term k's first
-random effect in the one dense block otherwise.*/
+random effect in the one dense block otherwise.  max_q caps the random
+effects of that dense block, and timing is the measured time the caller's
+message quotes; each caller states how they were measured.*/
 static void lmm_layout(pTHX_ const char *restrict fname, const LmmFrame *restrict f, LmmModel *restrict mm,
+                       size_t max_q, const char *restrict timing,
                        size_t **restrict order_out, size_t **restrict toff_out, bool *restrict single_out) {
 	const size_t nre = f->nre, p = f->p, nlev_tot = f->nlev_tot;
 	const size_t *NL = f->NL;
@@ -21278,7 +21282,7 @@ static void lmm_layout(pTHX_ const char *restrict fname, const LmmFrame *restric
 	char *const *re_group = f->re_group;
 	LmmTerm *terms;
 	size_t *order, *toff, ntheta = 0, maxblock = 0;
-	bool single = 1;
+	bool single = TRUE;
 	Newxz(toff, nre, size_t); SAVEFREEPV(toff);
 	/*lme4 orders the terms by decreasing number of levels (stably); theta
 	follows that order*/
@@ -21299,7 +21303,7 @@ static void lmm_layout(pTHX_ const char *restrict fname, const LmmFrame *restric
 	mm->term = terms; mm->ntheta = ntheta;
 	/*one grouping factor for every term means the same levels for every
 	term, which makes M block diagonal by level*/
-	for (size_t k = 1; k < nre; k++) if (strNE(re_group[k], re_group[0])) single = 0;
+	for (size_t k = 1; k < nre; k++) if (strNE(re_group[k], re_group[0])) single = FALSE;
 	if (single) {
 		size_t qtot = 0, m = NL[0];
 		for (size_t k = 0; k < nre; k++) qtot += PR[k].p;
@@ -21327,19 +21331,14 @@ static void lmm_layout(pTHX_ const char *restrict fname, const LmmFrame *restric
 		LmmBlock *b;
 		for (size_t oi = 0; oi < nre; oi++) { size_t k = order[oi]; toff[k] = Q; Q += NL[k] * PR[k].p; }
 		/*The dense method holds two Q x Q matrices (ZtZ and M) and
-		factors M once per criterion evaluation, so it costs 2 Q^2 NVs and
-		O(Q^3) time an evaluation.  Measured 2026-10-20 (gcc -O2, double
-		NV, y ~ x + (1|a) + (1|b) with a and b crossed, Q/2 levels each,
-		n = 3Q rows, one fresh process per Q): Q = 500 took
-		3.7 s and 17 MB, Q = 1000 32 s and 29 MB, Q = 2000 283 s and 71 MB,
-		and Q = 4000 reached 210 MB in its first minute.  4000 is then
-		about 40 minutes and 256 MB (512 MB at a 16-byte NV); the old
-		bound of 20000 was 6.4 GB (12.8 GB) and, at the measured cubic
-		rate, days.*/
-		if (Q > 4000)
+		factors M in O(Q^3) time, once per evaluation in lmer() and at every
+		PIRLS step of every evaluation in glmer(); max_q and timing are the
+		caller's.*/
+		if (Q > max_q)
 			croak("%s: %" UVuf " random effects over more than one grouping factor is more than the dense method "
-			      "takes (at most 4000; its time grows as the cube of that number, and 2000 take about 5 minutes); "
-			      "use a single grouping factor, whose levels are fitted one at a time, or fewer levels", fname, (UV)Q);
+			      "takes (at most %" UVuf "; its time grows as the cube of that number, and %s); "
+			      "use a single grouping factor, whose levels are fitted one at a time, or fewer levels",
+			      fname, (UV)Q, (UV)max_q, timing);
 		mm->nblock = 1;
 		Newxz(mm->block, 1, LmmBlock); SAVEFREEPV(mm->block);
 		b = &mm->block[0];
@@ -21535,7 +21534,7 @@ typedef struct {
 	bool            nb_free; //the negative-binomial theta is the last parameter (its log)
 	bool            ok; //the last evaluation's PIRLS converged
 	bool            from_mustart; //the next PIRLS starts from eta and mu as they stand (the family's mustart)
-	unsigned        pirls_fail; //evaluations whose PIRLS did not converge
+	size_t          pirls_fail; //evaluations whose PIRLS did not converge
 } GlmmModel;
 
 /*lme4's link and variance functions (src/glmFamily.cpp, lme4 2.0-6): the
@@ -39769,7 +39768,15 @@ SV *lmer(...)
 		bool single;
 		Zero(&mm, 1, LmmModel);
 		mm.n = n; mm.p = p; mm.X = X; mm.y = Y; mm.w = F.WT; mm.ldW = F.ldW; mm.reml = reml; mm.nterm = nre;
-		lmm_layout(aTHX_ "lmer", &F, &mm, &order, &toff, &single);
+		/*The dense block costs 2 Q^2 NVs and O(Q^3) time an evaluation.
+		Measured 2026-10-20 (gcc -O2, double NV, y ~ x + (1|a) + (1|b) with
+		a and b crossed, Q/2 levels each, n = 3Q rows, one fresh process per
+		Q): Q = 500 took 3.7 s and 17 MB, Q = 1000 32 s and 29 MB, Q = 2000
+		283 s and 71 MB, and Q = 4000 reached 210 MB in its first minute.
+		4000 is then about 40 minutes and 256 MB (512 MB at a 16-byte NV);
+		the old bound of 20000 was 6.4 GB (12.8 GB) and, at the measured cubic
+		rate, days.*/
+		lmm_layout(aTHX_ "lmer", &F, &mm, 4000, "2000 take about 5 minutes", &order, &toff, &single);
 		terms = mm.term; ntheta = mm.ntheta;
 		lmm_fill(&F, &mm, order, toff, single, F.WT, Y);
 		SAVEFREEPV(lmm_prep(&mm));
@@ -39975,11 +39982,11 @@ SV *lmer(...)
 				hv_store(res, "conf_level", 10, newSVnv(conf_level), 0);
 				{
 					// a variance component on its boundary: lme4's "singular fit"
-					bool sing = 0;
+					bool sing = FALSE;
 					for (size_t k = 0; k < nre; k++) {
 						size_t q = terms[k].q, idx = terms[k].off;
 						for (size_t col = 0; col < q; col++) {
-							if (nv_fabs(theta[idx]) < 1e-4) sing = 1;
+							if (nv_fabs(theta[idx]) < LMM_SINGULAR_TOL) sing = TRUE;
 							idx += terms[k].diag ? 1 : q - col;
 						}
 					}
@@ -40058,7 +40065,7 @@ SV *glmer(...)
 			if (fam == GLM_BINOMIAL) {
 				const NV m = F.WT ? F.WT[i] : 1.0;
 				if (y < 0.0 || y > 1.0) croak("glmer: y values must be 0 <= y <= 1");
-				if (nv_fabs(m * y - nv_rint(m * y)) > 1e-3) nonint = TRUE;
+				if (nv_fabs(m * y - nv_rint(m * y)) > 1e-3) nonint = TRUE; // R 4.6.1 binomial()'s initialize, abs(m*y - round(m*y)) > 0.001
 			} else if (y < 0.0) {
 				croak(fam == GLM_POISSON ? "glmer: negative values not allowed for the 'Poisson' family"
 				                         : "glmer: negative values not allowed for the negative binomial family");
@@ -40097,7 +40104,12 @@ SV *glmer(...)
 
 	Zero(&mm, 1, LmmModel);
 	mm.n = n; mm.p = pr; mm.X = Fr.X; mm.reml = 0; mm.nterm = Fr.nre;
-	lmm_layout(aTHX_ "glmer", &Fr, &mm, &order, &toff, &single);
+	/*glmer() refactors the dense block at every PIRLS step, so its cap is
+	lower than lmer()'s 4000.  Measured 2026-11-22 (gcc -O2, double NV, one
+	process): grouseticks' TICKS ~ YEAR + cHEIGHT + (1|BROOD) + (1|INDEX) +
+	(1|LOCATION), Q = 584 over three crossed factors, took 781 s; at the
+	cubic rate Q = 1000 is about 65 minutes and 2000 about 9 hours.*/
+	lmm_layout(aTHX_ "glmer", &Fr, &mm, 1000, "584 took about 13 minutes", &order, &toff, &single);
 	nt = mm.ntheta;
 
 	Zero(&g, 1, GlmmModel);
@@ -40228,7 +40240,10 @@ SV *glmer(...)
 				for (size_t j = 0; j < pr; j++) if (!(V[j * pr + j] > 0.0) || !nv_isfinite(V[j * pr + j])) use_hess = FALSE;
 				if (use_hess) {
 					/*positive definite, as lme4 requires of it (eigen > 0):
-					a Cholesky succeeds*/
+					a Cholesky succeeds.  Like lme4 2.0-6 vcov.merMod() (R/lmer.R,
+					calc.vcov.hess() and bad.V.hess), this tests only the beta block of
+					H^-1, not H itself, so an indefinite H whose beta block is still
+					positive definite is used, as lme4 uses it.*/
 					NV *C;
 					Newx(C, pr ? pr * pr : 1, NV);
 					memcpy(C, V, pr * pr * sizeof(NV));
@@ -40362,7 +40377,7 @@ SV *glmer(...)
 			for (size_t k = 0; k < Fr.nre; k++) {
 				size_t q = mm.term[k].q, idx = mm.term[k].off;
 				for (size_t col = 0; col < q; col++) {
-					if (nv_fabs(theta[idx]) < 1e-4) sing = TRUE;
+					if (nv_fabs(theta[idx]) < LMM_SINGULAR_TOL) sing = TRUE;
 					idx += mm.term[k].diag ? 1 : q - col;
 				}
 			}

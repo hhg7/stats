@@ -11034,7 +11034,7 @@ with the far tail taken from C<erfcx> so that it reaches C<z = -150>
 (C<pnorm(-40)> is C<3.655893540915e-350> there, not C<0>); C<qnorm> is refined on
 the log scale at the same width, down to C<< qnorm(-1e100, log =E<gt> 1) >>. Against
 mpmath at 110 digits, over 85 C<z> from 0 to C<1e150> (both tails and their logs)
-and 100 quantiles, the worst error is 1.4 epsilons of a long double and 1.1 of
+and 100 quantiles, the worst error is 1.3 epsilons of a long double and 1.1 of
 a C<__float128> for C<pnorm> (in the units above), and 2 epsilons for C<qnorm>
 on both; it was C<1e16> and C<7e30> for C<pnorm>, C<2e4> and C<1e19> for C<qnorm>.
 C<t/pnorm.qnorm.mpmath.t> holds those cases. The p-values the tests in this
@@ -12485,9 +12485,9 @@ practical. With several grouping factors the random effects are one dense
 matrix, factored at every IRLS step: 71 random effects (C<cbpp> with an
 observation-level term) take a fraction of a second, but 584 (C<grouseticks>'
 three crossed factors) took 13 minutes on a desktop, where C<lme4>'s sparse
-Cholesky takes about a second. A grouping factor may have a level per row (an observation-level
-random effect for overdispersion), which C<lme4> allows for a model with no
-scale parameter. Fixed-effect columns that are linear combinations of others
+Cholesky takes about a second, and more than 1000 croaks (C<lmer> takes 4000). A
+grouping factor may have a level per row (an observation-level random effect
+for overdispersion), which C<lme4> allows for a model with no scale parameter. Fixed-effect columns that are linear combinations of others
 are left out of the fit and reported as C<NaN>, as C<lme4> drops them.
 
 
