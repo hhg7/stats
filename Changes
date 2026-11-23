@@ -26,6 +26,144 @@ Revision history for Stats-LikeR
    two-product), which gives the same result as a correct fma(). A libm
    whose fma() is correct takes the same path as before.
 
+ [New function: glmer()]
+
+ - glmer() fits generalized linear mixed models, lme4::glmer() and
+   glmer.nb(): a binomial (logit), Poisson or negative-binomial (log)
+   response with lmer()'s random effects and formula, offset() terms,
+   offset and weights arguments, and glm()'s rate and odds ratios (exp)
+   with their Wald intervals. It is lme4's method: the Laplace
+   approximation, penalized IRLS for the conditional modes, and lme4's two
+   stages (the covariance parameters with the fixed effects inside the
+   IRLS, then everything), each by Nelder-Mead and a Newton polish on
+   Richardson differences, as lmer() fits. Standard errors are lme4's
+   vcov.merMod(use.hessian = TRUE), from the Hessian of the deviance.
+ - nAGQ from 2 to 100 fits a single scalar random effect by adaptive
+   Gauss-Hermite quadrature, with nodes computed at the NV's width, and
+   nAGQ => 0 stops after lme4's first stage. family => 'negbin' is
+   glmer.nb(): theta starts from MASS::theta.ml() on a Poisson fit, as
+   lme4 starts it, and is then estimated with the rest, where lme4
+   optimize()s it to 5e-5 on the log scale; theta => holds it fixed.
+ - One grouping factor is fitted a level at a time, so any number of
+   levels is practical; several are one dense matrix, factored at every
+   IRLS step, which is quick at 71 random effects and took 13 minutes at
+   584 (grouseticks' three crossed factors), where lme4's sparse Cholesky
+   takes about a second. As in lme4 (glFormula's allow.n), a grouping
+   factor may have a level per row.
+ - The estimates are those of a tightly converged lme4, which lme4's
+   defaults are not: its penalized IRLS stops on a relative change of
+   1e-7 in the penalized deviance, which leaves cbpp's log-likelihood
+   2.8e-4 below the optimum and its standard errors 0.5% out, and it
+   factors log|L|^2 with the working weights of the step before the mode,
+   which no setting of tolPwrss removes (1.1e-5 in the deviance on
+   grouseticks). glmer() takes the weights at the mode, as the Laplace
+   approximation is defined.
+ - t/glmer.binomial.R.t, t/glmer.poisson.R.t, t/glmer.negbin.R.t and
+   t/glmer.negbin_epil.R.t check 17 fits from lme4 2.0-6's own examples
+   and tests (cbpp by Laplace, nAGQ = 0 and nAGQ = 9 and with an
+   observation-level effect; its simulated Bernoulli, binomial and
+   Poisson data with and without weights; its offset test; grouseticks;
+   MASS's epilepsy data with a random slope, Poisson and negative
+   binomial; glmer.nb's examples) against lme4's deviance made exact as
+   above and minimized tightly, with their generator t/glmer.R.R. All
+   four take 3 s on a double perl and 184 s on a __float128 one, split
+   so that none is longer than about a minute.
+
+ [lmer()]
+
+ - lmer() takes offset() terms in the formula, which croaked "offset() is
+   not supported", and offset and weights arguments, as lme4::lmer() does:
+   an offset is subtracted from the response and added back into the
+   fitted values, and a prior weight w makes a row's residual variance
+   sigma^2/w, with the criterion subtracting the sum of log w as lme4's
+   does. A row with weight 0 is left out, as glm() leaves it out; lme4
+   keeps it, and its criterion is then infinite. t/lmer.offset.weights.R.t
+   checks lme4's tests/priorWeights.R (six weighted fits of a 1000-row
+   simulation, a weighted sleepstudy and its 40-row example),
+   tests/offset.R and tests/modFormula.R's offset(0.5*Days) against
+   lme4 2.0-6 and lmerTest 3.2-1.
+ - lmer()'s formula and data handling is now shared with glmer(), and its
+   optimizers take the objective as an argument; its results are
+   unchanged to the bit on every corpus in t/.
+
+ [Incomplete gamma and beta on a long-double or __float128 perl]
+
+ - The three places 0.3426 left short of the NV's epsilon are closed.
+   The incomplete gamma's continued fraction for a shape below 1 with x
+   between 1 and 3, and TOMS 708's bfrac() for a small shape against one
+   of 1e2 and up, ran 150 to 400 terms forward and carried one rounding
+   per term: 47 and 56 epsilons of a __float128. Both are now evaluated
+   backward from the depth the forward pass converges at, where a
+   rounding made deep in shrinks on its way up. The wide-only series
+   0.3426 put in front of the gamma fraction for 1 <= x < 3/2 is gone;
+   the fraction is now the better of the two.
+ - TOMS 708's bup(), apser() and fpser() are ported, so a wide build
+   takes every branch of R's bratio() where a shape is at most 1, and
+   never the Numerical Recipes fraction. Where R uses bup(), 0.3426 took
+   bpser() (59 epsilons of a __float128 at I_0.8(15/2, 1/1024)) or the
+   fraction; where R uses apser() or fpser() it took bpser(), whose
+   answer is 1 minus a near-1 tail: 5.8e31 epsilons of a __float128 at a
+   shape of 2^-130, and 1.9e17 of a long double at 2^-70.
+ - basym() formed 2/3 as a double, which left I_x(3e11, 1e12) 1e-23 off
+   on a __float128 (3.5e12 of its epsilons) wherever the two shapes were
+   unequal and past 1e5. The asymptotic coefficients of digamma() and
+   trigamma() were double quotients too, 3e-22 off on a __float128;
+   digamma feeds apser(), glm()'s negative binomial theta and
+   zerotrunc().
+ - Against mpmath at 110 digits, counted as 0.3426 counts, the worst
+   error is now 4 epsilons of a __float128 and 3 of a long double for
+   the gamma (47 and 18 on the same cases before) and 10 and 11 for the
+   beta (3.5e12 and 1.9e17), shapes from 2^-130 to 1e15. A double perl
+   is unchanged, to the last bit over 81234 values.
+ - On a __float128 perl qt() is up to twice as slow where its pt() calls
+   take bup() and bgrat() (qt(0.975, 12): 1.0 ms, was 0.53 ms), and a
+   continued fraction about 1.3 times; on a long double, 1.8 and 1.1.
+ - t/incomplete.gamma.beta.mpmath.t has 239 more cases, 861 tests in
+   all: gamma shapes 1e11 to 1e15 (Temme's expansion) and beta shapes to
+   1e15, whose references are mpmath's integral of the density, checked
+   against the series and fractions where both reach (they agree to
+   1e-101); a < 1 with x from 1 to 3; the region of bup() and bgrat();
+   and shapes of 2^-70 and 2^-130, which a double build skips. Its
+   tolerances are tightened to the new errors (the long double's gamma
+   from 32 to 8 units, the __float128's from 144 to 16).
+
+ [pnorm() and qnorm() on long-double and __float128 perls]
+
+ - pnorm() was R's double-precision port of Cody's algorithm on every
+   build, so on a long-double or __float128 perl it agreed with the truth
+   to about 1e-16 however wide the NV, and was 0 below z = -38.47, R's
+   cut-off for a double, although such an NV holds the tail down to
+   z = -150. On an x87 long double or a __float128 perl with the matching
+   libm (the builds whose incomplete gamma and beta 0.3426 widened) it now
+   computes from that NV's erfc(), with the far tail taken from erfcx()
+   so that nothing underflows before the answer does, and forms
+   (x - mean) / sd at the NV's width. pnorm(-40) is 3.655893540915e-350
+   there, where it was 0. pt() with df = Inf, which is pnorm(), follows.
+ - qnorm() used a double literal for 1/sqrt(2 pi) in its series near the
+   median, which put that literal's 1e-17 error into every quantile from
+   p = 0.2 to 0.8 (qnorm(0.25) was 3e17 epsilons of a __float128 out); it
+   now takes that constant at the NV's width. Its tail stopped after four
+   Newton passes on the linear scale, not enough from Moro's start below
+   p = 1e-200 at a __float128's width, and below p = 1e-300 it polished
+   against the double pnorm() and stopped polishing altogether past
+   log p = -1.3e9. On those builds every lower-tail quantile is now
+   finished by Newton on log Phi(z) = log p at the NV's width, with the
+   Mills ratio Phi/phi taken from erfcx() rather than as the exp() of a
+   difference of two large logs, which is what limited R's polish. The
+   same quantile serves every confidence interval and critical value in
+   the module, so those gain the digits too.
+ - Against mpmath at 110 digits, over 85 z from 0 to 1e150 (both tails and
+   their logs) and 100 quantiles (p from 2^-1074 to 1 - 2^-53, log p to
+   -1e100), the worst error, in t/incomplete.gamma.beta.mpmath.t's units,
+   is now 1.3 epsilons of a long double and 1.1 of a __float128 for
+   pnorm() (it was 1.2e16 and 7e30), and 2 for qnorm() on both (2.3e4 and
+   1.3e19). t/pnorm.qnorm.mpmath.t pins those cases, with its generator
+   t/pnorm.qnorm.mpmath.py. A double perl is unchanged, and so is the
+   cut-off at z = -38.47 of the p-values the tests in the module report
+   (approx_pnorm()), which keeps those the same on every build, as R's.
+ - t/pnorm.t checked that pnorm(-40) is 0, which is true only of a double;
+   it now checks pnorm(-200), which underflows on every NV.
+
 0.3428 2026-11-22 CST (Claude Opus 5.5 helped)
 
  [Behavior change: rank() of strings]
