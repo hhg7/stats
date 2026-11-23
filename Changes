@@ -1,5 +1,31 @@
 Revision history for Stats-LikeR
 
+0.3429 2026-11-22 CST (Claude Opus 5.5 helped)
+
+ [Bug fixes]
+
+ - write_table() could not write to a file that something still held open
+   on Windows. Since 0.3428 it writes a temporary file and renames it over
+   the target, and Windows refuses that rename while any handle has the
+   target open, so it croaked "could not replace '...': Permission denied".
+   A File::Temp object keeps its handle, and so does a tempfile() made with
+   UNLINK, so t/numeric.options.t (test 108), t/write_table.t and
+   t/write_table.tex.rownames.t failed on both Windows reports of 0.3428
+   (Strawberry 5.24.4 and 5.42.3, MSWin32-x64-multi-thread). The module was
+   at fault, not the tests: 0.3427 wrote such a file in place. Where the
+   rename is refused, the finished table is now copied into the file in
+   place. t/xlsx.files.robustness.t has 9 new subtests that write an
+   .xlsx, .csv and .tex target held open, longer than the new table, and
+   check the bytes and that no temporary file is left.
+ - pbinom() at n = 1.8e13 was 2.5e-10 off on Cygwin (t/numeric.fixes.t
+   test 38, perl 5.44.0 x86_64-cygwin-threads-multi). 0.3428's fix for the
+   incomplete beta near its mean relies on fma() rounding once, and the
+   fma() of newlib, Cygwin's libm, is x * y + z with two roundings. The
+   module now checks at load time whether fma() really rounds once. Where
+   it does not, the product is formed exactly in software (Dekker's
+   two-product), which gives the same result as a correct fma(). A libm
+   whose fma() is correct takes the same path as before.
+
 0.3428 2026-11-22 CST (Claude Opus 5.5 helped)
 
  [Behavior change: rank() of strings]

@@ -261,6 +261,14 @@ show it).
   `double` and silently round a wider `NV`. Use the `nv_*` macros below the
   includes in `LikeR.xs`, which add the `l`/`q` suffix. A new libm function
   goes into that block *and* the link probe in `Makefile.PL`.
+- **A libm function that links is not necessarily correct.** newlib's
+  `fma()`, Cygwin's libm, is `x * y + z` with two roundings, so 0.3428's
+  `ib_lambda()`, which needed one rounding, left `pbinom()` 2.5e-10 off at
+  n = 1.8e13 there (`t/numeric.fixes.t` 38). Code whose accuracy rests on a
+  libm guarantee beyond "close" (one rounding, exactness, correct rounding)
+  checks it at load time with volatile operands, as `nv_fma_probe()` does in
+  `BOOT`, and keeps a software fallback (`nv_two_prod()`). To test the
+  fallback, redefine the function badly in a scratch build and run the suite.
 - Classify floats only with `nv_isnan`/`nv_isinf`/`nv_isfinite`. Not the bare
   C99 macros (where not type-generic, `isfinite()` takes a `double` and calls
   a large finite `NV` infinite), and not `Perl_isnan`/`Perl_isinf`/
@@ -323,6 +331,15 @@ Windows:
   both ends `:raw`. Chem::Structure::Parser 0.040 failed on every Strawberry
   smoker this way. `-s` as a non-empty check, or against the same file's own
   earlier size, is fine.
+- Never depend on renaming over, or deleting, a file that someone may hold
+  open: Windows refuses while any handle has it open (the C runtime never
+  asks for `FILE_SHARE_DELETE`), and a `File::Temp` object, or a
+  `tempfile()` made with `UNLINK`, holds one until `END`. Opening the file to
+  write in place is allowed, so keep that as the fallback, as
+  `wt_target_copy()` does for `write_table()`. 0.3428's atomic replace had
+  none, and failed three test files on every Strawberry smoker. On Linux, an
+  `LD_PRELOAD` `rename()` that returns EACCES while the process has the
+  target open (in `/proc/self/fd`) reproduces it.
 
 Solaris, illumos and the BSDs:
 

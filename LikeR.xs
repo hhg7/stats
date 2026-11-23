@@ -134,7 +134,8 @@ those three.*/
 fmal() is in the Makefile.PL link probe with the rest of the `l` set. Where the
 probe failed on a long-double perl there is no nv_fma at all (LIKER_NO_NV_FMA):
 fma() would round its operands to a double, which is worse than the product it
-is meant to improve, so the caller keeps its plain expression.*/
+is meant to improve, so the caller keeps its plain expression. A libm whose fma()
+rounds twice is caught at load time instead; see nv_fma_fused.*/
 #if defined(USE_LONG_DOUBLE) && !defined(USE_QUADMATH) && !defined(LIKER_HAVE_LONG_DOUBLE_MATH)
 #  define LIKER_NO_NV_FMA 1
 #else
@@ -351,6 +352,49 @@ is built with.*/
 PERL_STATIC_INLINE bool nv_isnan(NV x)    { return (bool)(x != x); }
 PERL_STATIC_INLINE bool nv_isinf(NV x)    { return (bool)(x > NV_MAX || x < -NV_MAX); }
 PERL_STATIC_INLINE bool nv_isfinite(NV x) { return (bool)(x >= -NV_MAX && x <= NV_MAX); }
+#ifndef LIKER_NO_NV_FMA
+/*TRUE when nv_fma() rounds once, as C99 says it must; BOOT sets it from
+nv_fma_probe().
+
+newlib's portable fma() is x * y + z with two roundings, and newlib is Cygwin's
+libm. On Cygwin 0.3428's pbinom() at n = 1.8e13 was 2.5e-10 off
+(t/numeric.fixes.t test 38, perl 5.44.0 x86_64-cygwin-threads-multi), which is
+the error ib_lambda()'s fma exists to remove. Where this is FALSE, ib_lambda()
+forms the product exactly with nv_two_prod() instead.*/
+static bool nv_fma_fused = TRUE;
+
+/*Whether nv_fma() rounds once. With a = 1 + 2^-k and k = ceil(NV_MANT_DIG/2),
+a*a = 1 + 2^(1-k) + 2^-2k needs 2k + 1 > NV_MANT_DIG bits, so a product rounded
+on its own drops the last term, and fma(a, a, -(1 + 2^(1-k))) is then 0 where one
+rounding gives 2^-2k exactly. The operands are volatile because gcc evaluates a
+constant fma() itself, correctly, and so would answer for the libm.*/
+static bool nv_fma_probe(void) {
+	const int k = (NV_MANT_DIG + 1) / 2;
+	volatile NV a = 1.0 + nv_ldexp(1.0, -k);
+	volatile NV c = -(1.0 + nv_ldexp(1.0, 1 - k));
+	return (bool)(nv_fma(a, a, c) == nv_ldexp(1.0, -2 * k));
+}
+
+/*x * y as p + *e exactly, p being the rounded product: Dekker's mul12 with
+Veltkamp's split (T. J. Dekker, "A floating-point technique for extending the
+available precision", Numer. Math. 18 (1971) 224-242), for a libm whose fma()
+does not round once. Every step is narrowed, so that x87 excess precision cannot
+keep the bits the split depends on losing. The split multiplies by
+2^ceil(NV_MANT_DIG/2) + 1, so it overflows for an operand that close to NV_MAX;
+*e is then 0 and p is the plain rounded product, as before 0.3428.*/
+static NV nv_two_prod(NV x, NV y, NV *restrict e) {
+	const NV split = nv_ldexp(1.0, (NV_MANT_DIG + 1) / 2) + 1.0;
+	const NV p = nv_narrow(x * y);
+	NV t = nv_narrow(split * x);
+	const NV xh = nv_narrow(t - nv_narrow(t - x)), xl = nv_narrow(x - xh);
+	t = nv_narrow(split * y);
+	const NV yh = nv_narrow(t - nv_narrow(t - y)), yl = nv_narrow(y - yh);
+	const NV err = nv_narrow(nv_narrow(nv_narrow(nv_narrow(xh * yh - p) + nv_narrow(xh * yl))
+		+ nv_narrow(xl * yh)) + xl * yl);
+	*e = nv_isfinite(err) ? err : 0.0;
+	return p;
+}
+#endif
 /*Stack_off_t is the type XSUB.h's dITEMS gives `items`, and so the type every
 argument-stack index here is compared against. It arrived in perl 5.39.2, which
 introduced it precisely so the stack offset could widen to SSize_t on a build
@@ -5849,7 +5893,12 @@ lower = FALSE) was 2.4e-14 off on a long double. Here a - T x (T = a + b) is
 one fma, whose single rounding is of lambda itself. T is rounded too, unless
 a and b are integers, so its error t (a + b = T + t exactly, by two-sum) is
 taken out of the result as t x, which is small. Without an fma
-(LIKER_NO_NV_FMA: a long-double libm lacking fmal) the older form stays.*/
+(LIKER_NO_NV_FMA: a long-double libm lacking fmal) the older form stays.
+
+Where the libm's fma() rounds twice (nv_fma_fused FALSE: Cygwin), the product is
+split exactly as p + e by nv_two_prod(). Near the mean p is within a factor of 2
+of a (or of b), so a - p is exact by Sterbenz's lemma, and subtracting e is then
+the one rounding of lambda that fma() would have made.*/
 static NV ib_lambda(NV a, NV b, NV x, NV y) {
 	const NV apb = nv_narrow(a + b); //narrowed: the two-sum below needs the rounded sum
 	if (!nv_isfinite(nv_opaque(apb))) return a * y - b * x; //nv_opaque(): a and b are reused
@@ -5857,8 +5906,17 @@ static NV ib_lambda(NV a, NV b, NV x, NV y) {
 	return (a > b) ? apb * y - b : a - apb * x;
 #else
 	const NV bb = nv_narrow(apb - a), t = (a - nv_narrow(apb - bb)) + (b - bb);
-	if (x <= y) return nv_fma(-apb, x, a) - t * x;
-	return nv_fma(apb, y, -b) + t * y;
+	if (nv_fma_fused) {
+		if (x <= y) return nv_fma(-apb, x, a) - t * x;
+		return nv_fma(apb, y, -b) + t * y;
+	}
+	NV e;
+	if (x <= y) {
+		const NV p = nv_two_prod(apb, x, &e);
+		return (nv_narrow(a - p) - e) - t * x;
+	}
+	const NV p = nv_two_prod(apb, y, &e);
+	return (nv_narrow(p - b) + e) + t * y;
 #endif
 }
 
@@ -8020,16 +8078,51 @@ static PerlIO *wt_target_open(pTHX_ WtTarget *restrict tg, const char *mode) {
 	return PerlIO_open(tg->file, mode);
 }
 
+/*Copy the finished temporary over the target's contents in place, for a rename
+the system refused; rename_errno is that refusal's errno.
+
+Windows will not rename over a file that any handle holds open without
+FILE_SHARE_DELETE, and the C runtime's open() never asks for it: write_table()
+to the name of a File::Temp object, or of a tempfile() made with UNLINK (whose
+handle File::Temp keeps until END), failed "could not replace ...: Permission
+denied" on every Windows perl in 0.3428 (t/numeric.options.t 108,
+t/write_table.t, t/write_table.tex.rownames.t). Opening such a file to write
+in place is allowed, and is what write_table() did up to 0.3427. A croak here
+can leave the target cut short, as any write in place could then; the unwind
+still removes the temporary.*/
+static void wt_target_copy(pTHX_ WtTarget *restrict tg, int rename_errno) {
+	PerlIO *in = PerlIO_open(tg->tmp, "rb"); // no restrict: PerlIO handles are perl's
+	PerlIO *out = in ? PerlIO_open(tg->file, "wb") : NULL;
+	if (!out) {
+		if (in) PerlIO_close(in);
+		croak("write_table: could not replace '%s': %" SVf "\n",
+			tg->file, SVfARG(wt_errno_text(aTHX_ rename_errno)));
+	}
+	char buf[8192]; // one PerlIO buffer's worth; the copy runs once per table
+	int errnum = 0; // errno at the first failure seen
+	bool failed = FALSE;
+	SSize_t got;
+	while ((got = PerlIO_read(in, buf, sizeof buf)) > 0) {
+		if (PerlIO_write(out, buf, (Size_t)got) != got) { failed = TRUE; errnum = errno; break; }
+	}
+	if (!failed && (got < 0 || PerlIO_error(in))) { failed = TRUE; errnum = errno; }
+	PerlIO_close(in);
+	if (failed) {
+		PerlIO_close(out);
+		wt_write_failed(aTHX_ tg->file, errnum);
+	}
+	wt_close_checked(aTHX_ out, tg->file);
+	(void)PerlLIO_unlink(tg->tmp);
+}
+
 /*The table is complete and its handle closed: put it where the caller named.
 A rename over an existing file replaces it on POSIX and, through perl's own
-rename, on Windows.  A failure croaks, and the unwind removes the temporary.*/
+rename, on Windows. Where the rename is refused, the contents are copied in
+place by wt_target_copy(). A failure croaks, and the unwind removes the
+temporary.*/
 static void wt_target_commit(pTHX_ WtTarget *restrict tg) {
 	if (!tg->tmp[0]) return;
-	if (PerlLIO_rename(tg->tmp, tg->file) != 0) {
-		const int errnum = errno;
-		croak("write_table: could not replace '%s': %" SVf "\n",
-			tg->file, SVfARG(wt_errno_text(aTHX_ errnum)));
-	}
+	if (PerlLIO_rename(tg->tmp, tg->file) != 0) wt_target_copy(aTHX_ tg, errno);
 	tg->done = TRUE;
 }
 
@@ -31761,6 +31854,9 @@ OUTPUT:
 
 BOOT:
 	newXS("Stats::LikeR::__cs_uninit_catcher", cs_uninit_catcher, __FILE__);
+#ifndef LIKER_NO_NV_FMA
+	nv_fma_fused = nv_fma_probe();
+#endif
 
 void csort(...)
 PREINIT:
