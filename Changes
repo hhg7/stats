@@ -1,5 +1,46 @@
 Revision history for Stats-LikeR
 
+0.3430 2026-11-23 CST
+
+ [Bug fixes]
+
+ - On a double perl the incomplete beta with one shape at most 1 and the
+   other below 1e3 (pt() below 2000 degrees of freedom, pf() with either
+   df at most 2, pbinom() at the ends of its range, and the qt() and qf()
+   that invert them) now takes R's own TOMS 708 dispatch, bup(), bgrat(),
+   bpser(), apser() and fpser(), which long-double and __float128 perls
+   have taken since 0.3429. It used the Numerical Recipes continued
+   fraction there, whose tail near 0 is 1 minus a value near 1, so a
+   single rounding of the C library's lgamma() moved it by thousands of
+   epsilons. 0.3429 failed 2 subtests
+   of t/incomplete.gamma.beta.mpmath.t (559-560, I_x(1/1024, 7.5) at
+   x = 0.1, 5e-12 relative) on eight reports from one tester: perl 5.24.4
+   and 5.44.0 on Solaris, Hurd, and aarch64 and x86_64 Linux, whose
+   lgamma() rounds differently from glibc 2.39's, with which the test's
+   tolerance had been measured. Replacing lgamma() with lgammal() rounded
+   to a double reproduced the reports to the last digit. The module was at
+   fault, not the test. The same cases are now within 5 of the test's
+   units with either lgamma(), against 668 and 2.5e3 before, and
+   pt(-2^30, 30, log) in t/distributions.limits.R.t, 2.3e-13 from R's
+   value, is now R's to the last bit. No test's worst error rose past its
+   tolerance; the largest rise, qf() at log p = -64 against mpmath (7.7e-15
+   to 2.4e-14), is within one ulp of log p. The 40 "eps" subtests (shapes
+   of 2^-70 and 2^-130), skipped on a double perl because that fraction
+   was 1e17 epsilons out there, now run on every perl; they and the
+   tightened tolerances fail 36 subtests on 0.3429's code.
+ - The load-time check of whether fma() rounds once, new in 0.3429,
+   missed an fma() that forms the product in an x87 long double, as
+   Strawberry Perl 5.24's mingw-w64 (gcc 4.9.2) evidently does: its
+   probe's product needed 55 bits, which a long double holds. The
+   incomplete beta near the mean of two shapes of 1e15 was then 3e-11 out
+   in the log, and t/incomplete.gamma.beta.mpmath.t failed 6 subtests
+   (680-682 and 684-686) on perl 5.24.4 MSWin32-x64-multi-thread. The
+   probe now uses a product that needs every bit of a true fma (105 for a
+   double), so such a libm takes the exact software product instead.
+   Defining fma() that way on Linux reproduced the report to the last
+   digit, and the fixed module gives the same results there as with a
+   correct fma(). Strawberry 5.42.3 passed and is unchanged.
+
 0.3429 2026-11-23 CST 
 
  [Bug fixes]

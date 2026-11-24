@@ -360,16 +360,28 @@ newlib's portable fma() is x * y + z with two roundings, and newlib is Cygwin's
 libm. On Cygwin 0.3428's pbinom() at n = 1.8e13 was 2.5e-10 off
 (t/numeric.fixes.t test 38, perl 5.44.0 x86_64-cygwin-threads-multi), which is
 the error ib_lambda()'s fma exists to remove. Where this is FALSE, ib_lambda()
-forms the product exactly with nv_two_prod() instead.*/
+forms the product exactly with nv_two_prod() instead.
+
+The fma() of Strawberry Perl 5.24's mingw-w64 (gcc 4.9.2) rounds twice in
+another way: its results are those of the product formed in an x87 long
+double, 64 bits where a double's product needs 106, and so it passed 0.3429's
+probe, whose product needed only 55. I_x(1e15, 1e15) near x = 1/2 was then
+3e-11 out in the log (t/incomplete.gamma.beta.mpmath.t 680-682 and 684-686,
+perl 5.24.4 MSWin32-x64-multi-thread); the newer mingw-w64 of Strawberry 5.42
+passed. Defining nv_fma(x,y,z) as ((NV)((long double)(x) * (long double)(y) +
+(long double)(z))) reproduces that report to the last digit on x86-64 Linux.*/
 static bool nv_fma_fused = TRUE;
 
-/*Whether nv_fma() rounds once. With a = 1 + 2^-k and k = ceil(NV_MANT_DIG/2),
-a*a = 1 + 2^(1-k) + 2^-2k needs 2k + 1 > NV_MANT_DIG bits, so a product rounded
-on its own drops the last term, and fma(a, a, -(1 + 2^(1-k))) is then 0 where one
-rounding gives 2^-2k exactly. The operands are volatile because gcc evaluates a
-constant fma() itself, correctly, and so would answer for the libm.*/
+/*Whether nv_fma() rounds once. With a = 1 + 2^-k and k = NV_MANT_DIG - 1, the
+smallest step above 1, a*a = 1 + 2^(1-k) + 2^-2k needs 2k + 1 = 2 NV_MANT_DIG
+- 1 bits, so a product rounded to any narrower format before the add drops the
+last term, and fma(a, a, -(1 + 2^(1-k))) is then 0 where one rounding gives
+2^-2k exactly: that catches x * y + z rounded at the NV's width (newlib) and
+in an x87 long double (old mingw-w64) alike. 2^-2k is a normal number at every
+width (2^-104, 2^-126, 2^-224). The operands are volatile because gcc evaluates
+a constant fma() itself, correctly, and so would answer for the libm.*/
 static bool nv_fma_probe(void) {
-	const int k = (NV_MANT_DIG + 1) / 2;
+	const int k = NV_MANT_DIG - 1; //int: the exponent nv_ldexp() takes
 	volatile NV a = 1.0 + nv_ldexp(1.0, -k);
 	volatile NV c = -(1.0 + nv_ldexp(1.0, 1 - k));
 	return (bool)(nv_fma(a, a, c) == nv_ldexp(1.0, -2 * k));
@@ -5802,8 +5814,9 @@ static void cor_extract_cols(pTHX_ AV *const *restrict rows, size_t nrows,
 }
 
 /*The Numerical Recipes fraction serves only a build without LIKER_WIDE_NV, and
-there only below IB_LARGE; a wide build takes TOMS 708's algorithms for every
-case since 0.3429 (see incbeta_xy_core()).*/
+there only for two shapes above 1 and below IB_LARGE (since 0.3430; before, for
+any smaller shape); a wide build takes TOMS 708's algorithms for every case
+since 0.3429 (see incbeta_xy_core()).*/
 #ifndef LIKER_WIDE_NV
 #define MAX_ITER 500
 /*3e-15 and 1e-30 are the thresholds Numerical Recipes' betacf() carries, at a
@@ -6190,8 +6203,8 @@ static NV ib_algdiv(NV b, NV a) {
 /*TOMS 708's bpser(), from R 4.6.1's src/nmath/toms708.c: the power series
 x^a / (a B(a, b)) (1 + a sum_n c_n / (a + n)) for I_x(a, b), c_n =
 prod_k (1 - b/k) x. R's bpser() has a branch for every size of the shapes;
-here it is only reached with one shape at most 1 and the other at least
-IB_LARGE (on a wide build, any size: see incbeta_xy_core()), so the factor is
+here it is only reached with one shape at most 1 and the other of any size
+(see ib_bratio_small()), so the factor is
 x^a/(a B(a, b)) with B through TOMS 708's "a0 < 1 < 8 <= b0" form,
 log Gamma(1 + a0) + algdiv(a0, b0). Returns I_x(a, b) or its log; the series
 is R's, stopped at |w| <= eps/a or 1e7 terms.*/
@@ -6199,9 +6212,9 @@ static NV ib_bpser(NV a, NV b, NV x, bool log_p) {
 	if (x <= 0.0) return log_p ? -NV_INF : 0.0;
 	const NV a0 = (a < b) ? a : b, b0 = (a < b) ? b : a;
 	/*TOMS 708 uses algdiv() only from b0 = 8 up, because its own is an asymptotic
-	series. ib_algdiv() is the exact identity through stirlerr(), so on a wide
-	build (where bpser() is reached with a larger shape from 1 up, for the cases
-	it covers) it serves for any b0, and avoids the difference of two lgamma()s
+	series. ib_algdiv() is the exact identity through stirlerr(), so (bpser()
+	being reached with a larger shape from 1 up, for the cases it covers) it
+	serves for any b0, and avoids the difference of two lgamma()s
 	of a few units each, which for a tiny a0 is a log far below its terms.*/
 	const NV z = a * nv_log(x) - pg_lgamma1p(a0) - ib_algdiv(a0, b0);
 	NV ans = log_p ? z + nv_log(a0 / a) : nv_exp(z) * (a0 / a);
@@ -6218,7 +6231,6 @@ static NV ib_bpser(NV a, NV b, NV x, bool log_p) {
 	return (a * sum > -1.0) ? ans * (a * sum + 1.0) : 0.0;
 }
 
-#ifdef LIKER_WIDE_NV
 static NV c_digamma(NV x); //with the count-model helpers below
 
 /*log of x^a y^b / B(a, b) where one shape is at most 1, TOMS 708's brcmp1()
@@ -6337,7 +6349,7 @@ static NV ib_bup_bgrat(NV b, NV a, NV y, NV x, bool give_log) {
 	return hi + nv_log1p(nv_exp(lo - hi));
 }
 
-/*R's bratio() for min(a, b) <= 1, every branch of it, on a wide build; R 4.6.1
+/*R's bratio() for min(a, b) <= 1, every branch of it, on every build; R 4.6.1
 src/nmath/toms708.c. Returns I_x(a, b), or 1 - I_x(a, b) with *flip set TRUE,
 or the log of either.
 
@@ -6346,9 +6358,18 @@ uses bup() it took bpser() if x0 b0 <= 3/2 and the Numerical Recipes fraction
 otherwise, and where R uses apser() or fpser() it took bpser(); for both
 shapes at most 1 it took bpser() always. bpser() there sums the larger of the
 two tails, near 1, and the smaller is what is left of 1 - it: 59 epsilons of a
-__float128 at I_0.8(15/2, 1/1024) and 1e31 at I_0.999(1/2, 2^-130). (A double
-build keeps the Numerical Recipes fraction for all of these below a shape of
-1e3, which is 1e16 to 1e18 epsilons out at a shape of 2^-60, some logs NaN.)
+__float128 at I_0.8(15/2, 1/1024) and 1e31 at I_0.999(1/2, 2^-130).
+
+Up to 0.3429 this served only a wide build. A double build took the
+bpser()/bgrat() subset from a larger shape of IB_LARGE up, and the Numerical
+Recipes fraction below it, which is 1e16 to 1e18 epsilons out at a shape of
+2^-60 (some logs NaN). Where the fraction's I_x is near 1 and the tail wanted
+is its complement, one rounding of lgamma() in the front factor is thousands
+of epsilons of that tail: 1 - I_0.1(1/1024, 15/2) was 1.9e-13 out (870
+epsilons) with glibc 2.39's lgamma() and 5.0e-12 with lgammal() rounded to a
+double, the result 0.3429 gave on the Solaris, Hurd, aarch64 and x86_64 Linux
+smokers of one tester.
+
 R's eps, 1e-15, is NV_EPSILON in the apser() and fpser() tests, as those two
 are first-order expansions in a shape below it; the other thresholds are R's.*/
 static NV ib_bratio_small(NV a, NV b, NV x, NV y, bool give_log, bool *restrict flip) {
@@ -6400,7 +6421,6 @@ static NV ib_bratio_small(NV a, NV b, NV x, NV y, bool give_log, bool *restrict 
 	}
 	return w;
 }
-#endif
 
 /*Where ib_basym() takes over from the continued fractions: both shapes above
 IB_BASYM_MIN and |lambda| within 3% of the smaller, TOMS 708's own window.
@@ -6412,8 +6432,9 @@ about 300 smaller than the last, and twenty reach 1e-40.*/
 #define IB_BASYM_MIN 1e5
 
 /*From this size of the larger shape up, incbeta_xy_core() takes TOMS 708's
-algorithms rather than the Numerical Recipes fraction (on a LIKER_WIDE_NV build
-for every case: see the top of incbeta_xy_core()). That fraction re-forms
+algorithms rather than the Numerical Recipes fraction for two shapes above 1
+(on a LIKER_WIDE_NV build for every case, and on every build where one shape
+is at most 1: see the top of incbeta_xy_core()). That fraction re-forms
 1 - x from x inside its coefficients and loses about max(a, b) * eps relative
 to it, measured against mpmath at mp.dps = 40 over x from 0.3 to 30 standard
 deviations below the mean: 2e-13 at a = 1e3, 1e-10 at 1e6, 5e-2 at 1e15 --
@@ -6447,14 +6468,13 @@ positive when x has already rounded to 1.0 is precisely the case this
 function exists to get right.  Only y <= 0 means the upper tail has really
 vanished.
 
-Once either shape reaches IB_LARGE the work goes to TOMS 708's methods, chosen
-as R's bratio() chooses them: with both shapes above 1, the problem is turned
-so that lambda >= 0 and handed to basym() near the mean of two large shapes
-and to bfrac() everywhere else; with the smaller shape at most 1, the choice
-among bpser() and bgrat() is R's (see the branch below), and on a LIKER_WIDE_NV
-build it is all of R's choice, bup(), apser() and fpser() included
-(ib_bratio_small()). Whichever tail is computed, the requested one is it or
-1 - it.
+With the smaller shape at most 1, or once either shape reaches IB_LARGE, the
+work goes to TOMS 708's methods, chosen as R's bratio() chooses them: with
+both shapes above 1, the problem is turned so that lambda >= 0 and handed to
+basym() near the mean of two large shapes and to bfrac() everywhere else;
+with the smaller shape at most 1 it is all of R's choice, bup(), apser() and
+fpser() included (ib_bratio_small()). Whichever tail is computed, the
+requested one is it or 1 - it.
 
 The log form takes the log of the front factor rather than of its exp(), so a
 tail far below NV_MIN still has a log: pt(-1e10, 30, log => 1) and the qt()
@@ -6473,7 +6493,10 @@ static NV incbeta_xy_core(NV a, NV b, NV x, NV y, bool give_log) {
 	not serve, because bup(), apser() and fpser() were not ported.*/
 	{
 #else
-	if (a >= IB_LARGE || b >= IB_LARGE) {
+	/*A double build keeps the Numerical Recipes fraction only for two shapes
+	above 1 and below IB_LARGE; up to 0.3429 it kept it below IB_LARGE whatever
+	the smaller shape (see ib_bratio_small()).*/
+	if (a >= IB_LARGE || b >= IB_LARGE || a <= 1.0 || b <= 1.0) {
 #endif
 		bool flip; //TRUE when w below is 1 - I_x(a, b)
 		NV w; //log when give_log
@@ -6489,31 +6512,12 @@ static NV incbeta_xy_core(NV a, NV b, NV x, NV y, bool give_log) {
 			else
 				w = ib_bfrac(A, B, X, Y, lam, NV_EPSILON, give_log);
 		} else {
-#ifdef LIKER_WIDE_NV
+			/*The smaller shape is at most 1: R's bratio() dispatch. Up to 0.3413 a
+			double build sent every such case with a larger shape of IB_LARGE or
+			more that was not on the fraction's own side to bgrat(), whose
+			expansion is poor for a tiny variable: pt(-3000, 5000, log = TRUE) was
+			NaN and pt(-960, 2508.3, log = TRUE) was wrong in the sixth digit.*/
 			w = ib_bratio_small(a, b, x, y, give_log, &flip);
-#else
-			/*The smaller shape is at most 1. R's bratio() turns the problem so that
-			x0 <= 1/2 and then picks, in this order: bpser() when b0 <= 1, for the
-			complement when x0 >= 0.29, and for the lower tail when x0 < 0.1 and
-			(x0 b0)^a0 <= 0.7; bgrat() for the complement otherwise (b0 > 15 holds
-			here, since b0 is the larger shape once it exceeds 1). Up to 0.3413 this
-			sent every such case that was not on the fraction's own side to bgrat(),
-			whose expansion is poor for a tiny variable: pt(-3000, 5000, log = TRUE)
-			was NaN and pt(-960, 2508.3, log = TRUE) was wrong in the sixth digit.*/
-			const bool swp = x > 0.5;
-			const NV a0 = swp ? b : a, b0 = swp ? a : b, x0 = swp ? y : x, y0 = swp ? x : y;
-			bool w_lower; //TRUE when w is I_x0(a0, b0), FALSE when it is the complement
-			if (b0 <= 1.0) {
-				w = ib_bpser(a0, b0, x0, give_log); w_lower = 1;
-			} else if (x0 >= 0.29) {
-				w = ib_bpser(b0, a0, y0, give_log); w_lower = 0;
-			} else if (x0 < 0.1 && nv_pow(x0 * b0, a0) <= 0.7) {
-				w = ib_bpser(a0, b0, x0, give_log); w_lower = 1;
-			} else {
-				w = ib_bgrat(b0, a0, y0, x0, NV_EPSILON, give_log); w_lower = 0;
-			}
-			flip = (w_lower == swp); //the caller wants I_x(a, b), which is w for no swap and 1 - w for a swap
-#endif
 		}
 		if (!flip) return w;
 		return give_log ? nv_log1mexp(w) : 1.0 - w;

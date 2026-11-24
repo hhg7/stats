@@ -3026,8 +3026,12 @@ epsilons) was, in 0.3426, 8 epsilons of a long double and 39 of a `__float128`
 for the gamma (it had been 5e15 and 3e30) and 64 and 86 for the beta (1e5 and
 7e19); the quantiles, 31 and 31 (1.7e3 and 1e18). Since 0.3429 the worst over
 the test's 861 cases and 2200 others, which add shapes from 2^-130 to 1e15, is
-3 and 4 epsilons for the gamma and 11 and 10 for the beta. A double perl is not
-changed by a single bit. `t/incomplete.gamma.beta.mpmath.t` holds the expected
+3 and 4 epsilons for the gamma and 11 and 10 for the beta. 0.3429 left a double
+perl unchanged to the last bit. Since 0.3430 a double perl also takes R's own
+algorithms wherever one shape of the incomplete beta is at most 1 (`pt` below
+2000 degrees of freedom, `pf` with either df at most 2), where it had used a
+continued fraction that was up to `5e-12` out and whose last digits depended on
+the C library's `lgamma`. `t/incomplete.gamma.beta.mpmath.t` holds the expected
 values, frozen, with the script that made them. A long-double perl whose C
 library lacks the long-double math functions, or whose long double is the
 double-double of ppc64, keeps the double's constants and its `1e-14`.

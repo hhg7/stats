@@ -66,30 +66,47 @@
 # the cases below on each of the three builds (double perl 5.44.0, x87 long
 # double perl 5.12.5, __float128 perl 5.44.0-quadmath), with a factor of three
 # of headroom or more. Observed worst in the tolerance's units (the same figure
-# this file prints with diag() on every run), with the 0.3428 code's worst on
-# the same cases in parentheses where it differed:
+# this file prints with diag() on every run), with the previous code's worst on
+# the same cases in parentheses where it differed (0.3429's on a double, 0.3428's
+# on the wide builds):
 #
-#                    double            long double              __float128
-#                    worst    K        worst  (0.3428)  K       worst  (0.3428)  K
-#   @GAMMA           23.9     72       2.57   (17.6)    8       4.07   (46.5)    16
-#   @BETA            73.9     224      6.54   (38.4)    24      10.1   (3.5e12)  32
-#   @BETA, tiny      1.2e3    3600     1.07   (64.4)    4       0.93   (38.8)    4
-#   @BETA, bup       668      2048     1.23   (13.3)    4       1.54   (25.8)    5
-#   @BETA, eps       skipped           1.43   (1.9e17)  5       0.90   (5.8e31)  4
-#   @QUANT           36.2     112      10.2             32      10.2   (14.8)    32
+#                    double                     long double              __float128
+#                    worst  (0.3429)   K        worst  (0.3428)  K       worst  (0.3428)  K
+#   @GAMMA           23.9              72       2.57   (17.6)    8       4.07   (46.5)    16
+#   @BETA            27.7   (73.9)     128      6.54   (38.4)    24      10.1   (3.5e12)  32
+#   @BETA, tiny      1.61   (1.2e3)    8        1.07   (64.4)    4       0.93   (38.8)    4
+#   @BETA, bup       5.79   (668)      24       1.23   (13.3)    4       1.54   (25.8)    5
+#   @BETA, eps       1.34   (1e17)     8        1.43   (1.9e17)  5       0.90   (5.8e31)  4
+#   @QUANT           6.67   (36.2)     32       10.2             32      10.2   (14.8)    32
 #
-# On a double build nothing moved, to the last bit (81234 incomplete gamma and
+# The double column is the same to the last digit with three libms: glibc
+# 2.39's, one whose log, log1p, exp, expm1 and lgamma are the long-double
+# functions rounded to a double (as near correctly rounded as can be had here),
+# and one whose fma() rounds the product to an x87 long double first (as
+# Strawberry 5.24's mingw-w64 does), which the module's load-time probe now
+# refuses (LikeR.xs, nv_fma_probe()). Its figures are perl 5.44.0's, except
+# the "bup" row's 5.79, which is 5.10.1's and 5.18.4's (4.96 on 5.32.1 and
+# later): those perls read some of the expected values an ulp off.
+#
+# Up to 0.3429 a double build kept the Numerical Recipes fraction below a shape
+# of 1e3, which is not R, and the "tiny" and "bup" rows were where it was worst;
+# the "eps" rows were skipped there, because that fraction cannot hold
+# 1/B(a, b) = a for a shape of 2^-70: it was 1e17 epsilons out, and some logs
+# NaN. Its "bup" rows also moved with the libm: their complement is 1 - I_x
+# with I_x near 1, so one rounding of lgamma() moved it by thousands of
+# epsilons. 0.3429's K of 2048 there, measured with glibc 2.39 only, failed
+# tests 559-560 (2.5e3 units) on one tester's Solaris, Hurd, aarch64 and x86_64
+# Linux machines, whose lgamma() rounds as the long-double one does. Since
+# 0.3430 a double build takes R's bratio() dispatch wherever a shape is at most
+# 1, and keeps the fraction only for two shapes between 1 and 1e3 (0.3429 had
+# left a double build unchanged to the last bit: 81234 incomplete gamma and
 # beta values, pt(), qt(), pchisq(), qchisq(), pf() and qf() among them,
-# compared between 0.3428 and 0.3429): below a shape of 1e3 that build keeps
-# the Numerical Recipes fraction, which is not R, and the "tiny" and "bup" rows
-# are where it is worst. The "eps" rows are skipped there, because that
-# fraction cannot hold 1/B(a, b) = a for a shape of 2^-70: it is 1e17 epsilons
-# out, and some logs are NaN. A wide build takes TOMS 708's algorithms for
-# every case since 0.3429. 0.3428's largest wide errors were in the continued
-# fractions: the incomplete gamma's for a < 1 and x between 1 and 3, and
-# bfrac() for a shape of 3/2 against 1e4 and up, each carried one rounding per
-# term over 150 to 400 terms; both are now evaluated backward. Its 3.5e12 was
-# basym()'s 2/3, a double literal, at unequal shapes past 1e5.
+# compared between 0.3428 and 0.3429). A wide build takes TOMS 708's
+# algorithms for every case since 0.3429. 0.3428's largest wide errors were in
+# the continued fractions: the incomplete gamma's for a < 1 and x between 1
+# and 3, and bfrac() for a shape of 3/2 against 1e4 and up, each carried one
+# rounding per term over 150 to 400 terms; both are now evaluated backward.
+# Its 3.5e12 was basym()'s 2/3, a double literal, at unequal shapes past 1e5.
 #
 # Expected values are parsed by perl's own string-to-NV conversion, which on
 # 5.10.1 is unreliable at the exponent extremes (it reads 1e-321 as 0 and 1e307
@@ -983,7 +1000,7 @@ my $EPS = 2 ** (1 - $bits);
 
 # K per group and width: see the header for how it was set.
 my %K = (
-	'double'      => { gamma => 72, beta => 224, tiny => 3600, quant => 112, bup => 2048 }, # no eps: those rows are skipped
+	'double'      => { gamma => 72, beta => 128, tiny => 8, quant => 32, bup => 24, eps => 8 },
 	'long double' => { gamma => 8, beta => 24, tiny => 4, quant => 32, bup => 4, eps => 5 },
 	'__float128'  => { gamma => 16, beta => 32, tiny => 4, quant => 32, bup => 5, eps => 4 },
 );
@@ -1042,11 +1059,6 @@ for my $r (@BETA) {
 	my $group = ref $r->[0] ? 'beta' : shift @$r; # 'tiny', 'bup' or 'eps' where the row names one
 	my ($a, $b, $x, $y, @e) = @$r;
 	($a, $b, $x, $y) = (nv(@$a), nv(@$b), nv(@$x), nv(@$y));
-	if (!defined $K->{$group}) {
-		# the "eps" rows on a double build: see the header
-		SKIP: { skip(sprintf('I_x(a=%.12g, b=%.12g): the double build keeps the Numerical Recipes fraction here', $a, $b), 1) }
-		next;
-	}
 	my @got = (
 		Stats::LikeR::_incbeta_xy($a, $b, $x, $y, 0),
 		Stats::LikeR::_incbeta_xy($b, $a, $y, $x, 0),
