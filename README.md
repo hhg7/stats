@@ -1986,6 +1986,8 @@ deterministic layout. Each column is the per-frame arrays joined in frame order.
 Because HoA is column-major, a column missing from a frame — or a ragged short
 column within a frame — is padded with undef so every output column ends up the
 same length (the total number of rows).
+A column whose value is defined but not an array reference dies, naming it: a hash
+of scalars such as `{ a => 1, b => 2 }` is not a frame.
 
     my $a = { g => [ 'a', 'a' ], v => [ 1, 2 ] };
     my $b = { g => [ 'b' ],      w => [ 9 ]    };   # v absent here, w is new
@@ -2835,6 +2837,17 @@ The first argument may be a single number or an array reference, and an array
 reference comes back the same length and in the same order — again as `pnorm`
 does. An `undef` element becomes `NaN`.
 
+Each distribution parameter may be an array reference too, as in R, and then
+the first argument and the parameters are recycled to the longest: a shorter
+one is reused from its start, without a warning when its length does not divide
+the longest, any empty one makes the answer empty, and an `undef` element is
+`NaN` there. The answer is an array reference whenever any argument is one.
+This holds for `dnorm` and `pnorm` as well.
+
+    pt(2, df => [1, 2, 3]);                 # [0.852416, 0.908248, 0.930337]
+    qt(0.975, df => [1 .. 10, 20, 50, 100, 1000]);   # R's TDist.Rd example
+    dnorm([0, 1], mean => [0, 1], sd => [1, 2]);  # [0.398942, 0.199471]
+
     my $z  = qnorm(0.975);                 # 1.959963984540054
     my $zs = qnorm([0.025, 0.5, 0.975]);   # [-1.9599639845, 0, 1.9599639845]
 
@@ -3100,6 +3113,10 @@ Usage:
 but default mean, standard deviation, and log can be passed as parameters:
 
     $x = dnorm(0, mean => 0, sd => 2, 'log' => 0);
+
+`mean` and `sd` may be array references, recycled against `x` as R recycles them
+(see [Distribution functions](#distribution-functions)). A negative `sd` gives
+`NaN` there, with one warning for the call, as in R.
 
 Where the density is 0 — `x` infinite, `sd => Inf`, `sd => 0` away from the
 mean — `log => 1` gives `-Inf`, as R does (up to 0.33 it gave `0`). An `undef`
@@ -5382,7 +5399,8 @@ works like mean, taking array references and arrays:
 
     median( $test_data[$i][0] )
 
-median will die if any undefined values are provided
+median will die if any undefined values are provided, or if there are no values
+at all: `median([])` dies, where R's `median(numeric(0))` is `NA`.
 
 For an even count the two middle values are averaged by halving each first
 when their sum would overflow, so `median([1e308, 1e308])` is `1e308`, as in R.
@@ -5404,6 +5422,8 @@ selected column (`value_vars`) is unpivoted into a `variable`/`value` pair.
 Column identifiers are names for AoH/HoA/HoH frames and 0-based integer
 positions for AoA. `value_vars` defaults to every column not in `id_vars`, in
 `colnames()` order.
+A name repeated in `id_vars` or `value_vars` is used once, at its first place, as
+pandas does.
 
 Output row order is **column-major**: all rows for `value_vars[0]`, then all
 rows for `value_vars[1]`, and so on, preserving input row order within each
@@ -5524,16 +5544,22 @@ one you're holding:
 A **column** is one field of each record. Where the fields live depends on the
 shape:
 
-- **Array of hashes** (AoH) — each row is a hash; the columns are its keys, so
-  the count is how many keys a row has.
+- **Array of hashes** (AoH) — each row is a hash; the columns are every key any
+  row has, so the count is the number of distinct keys across the rows. A row
+  that lacks a key has a missing cell there, as everywhere else in the module.
 - **Array of arrays** (AoA) — each row is a list; the columns are its slots, so
   the count is how long a row is.
 - **Hash of arrays** (HoA) — the keys *are* the columns, so the count is the
   number of keys.
-- **Hash of hashes** (HoH) — each value is a row hash; the columns are that
-  hash's keys, so the count is how many keys a row has.
+- **Hash of hashes** (HoH) — each value is a row hash; the columns are every key
+  any row hash has, counted as for an AoH.
 
 A plain flat list (`[1,2,3]`) is treated as a single column.
+
+For an unblessed AoH or HoH the count is `scalar colnames($frame)`:
+
+    ncol([ {a=>1,b=>2}, {c=>3,d=>4} ]) # 4   a, b, c and d
+    ncol([ {a=>1}, {a=>2,b=>3} ])      # 2   row 0 has no b
 
 ### Edge cases
 
@@ -5548,8 +5574,9 @@ when they hold no rows — the keys are the columns, rows or not.
 
 `ncol` would rather stop than hand back a wrong number:
 
-- **Ragged frame** — if the rows disagree on how many columns they have (AoH,
-  AoA, or HoH), there is no single column count, so it dies instead of guessing.
+- **Ragged AoA** — if the rows of an array of arrays disagree on how long they
+  are, there is no single column count, so it dies instead of guessing. (Hash
+  rows cannot be ragged this way: a missing key is a missing cell.)
 - **Junk input** — `undef`, a plain scalar, a SCALAR/CODE/GLOB ref, or a hash
   whose values aren't all arrays (HoA) or all hashes (HoH) dies with a message
   saying what it got.
@@ -5898,6 +5925,9 @@ before a numeric reduction; `skipna => 0` makes a numeric reducer return NA if
 its bucket contains any NA.
 
 Rows whose `columns`-tuple contains NA are skipped (an unnameable column).
+A row whose `index` key is NA is kept as a row of its own, sorted last, and an
+output column whose every cell is NA is kept as `undef` cells (or `fill_value`);
+pandas' default `dropna=True` drops both, and `pivot_table` has no `dropna`.
 With no `index`, all rows collapse to a single `all` row.
 
 ### Generated column names
@@ -6323,7 +6353,8 @@ value is always included.
     array reference of probabilities in `[0, 1]` giving explicit cut
     boundaries, e.g. `[0, 0.5, 0.95, 1]`. An explicit vector is sorted for you,
     and any probability outside `[0, 1]` is clamped into it rather than being an
-    error.
+    error. Each probability must be a number: an `undef`, a word or a
+    `NaN` in `$q` dies naming its index.
 
 `undef` and `NaN` entries are treated as missing (NA), as pandas treats `NaN`:
 they are skipped when computing cutpoints and, when codes are requested, come
@@ -6396,7 +6427,10 @@ you got:
 If a probability vector omits `0` or `1`, the end bins still stretch over the
 whole range: a value below the first cutpoint lands in bin `0`, one above the
 last lands in the last bin. pandas returns NA for those, so include `0` and `1`
-unless the stretching is what you want.
+unless the stretching is what you want. With `labels => 'interval'` a stretched
+end bin is labeled open on that side, so
+`qcut([1 .. 10], [0.25, 0.75], labels => 'interval')` labels every value
+`(-Inf, Inf)`, and `[0, 0.5, 0.9]` gives `[1, 5.5]` and `(5.5, Inf)`.
 
 ### Examples
 
@@ -6633,7 +6667,8 @@ minimal example:
 | `header` | `1` (the default): the first line holds the column names. `0`, or perl's false `''`: the first line is data, as R's `header = FALSE` and pandas' `header=None` | `header => 0` |
 | `col_names` | an array reference of column names. With `header => 0` it names the columns, which are otherwise `V1`, `V2`, … as in R; with a header it replaces the header's names | `'col_names' => ['id', 'name']` |
 | `quote` | `'"'` (the default): a double quote starts a quoted field. `''`: quotes are ordinary text, as R's `quote = ""` and pandas' `quoting=csv.QUOTE_NONE` | `quote => ''` |
-| `sheet`| which worksheet to read from an `.xlsx` file: a sheet name, or a 1-based index when no sheet has that name (default: first sheet). An error for any other file | `sheet => 'Sheet2'` |
+| `sheet`| which sheet to read from an `.xlsx` or `.ods` file: a sheet name, or a 1-based index when no sheet has that name (default: first sheet). An error for any other file | `sheet => 'Sheet2'` |
+| `skiprows` | pandas': rows to leave out before anything else is read, by 0-based index — a count of leading rows, an array reference of indices, or a code reference that is passed each index and returns true to leave that row out. The header is the first row left. See [skipping rows](#skipping-rows-skiprows) | `skiprows => 2`, `skiprows => [0, 2]`, `skiprows => sub { $_[0] % 2 }` |
 | `na_strings` | field texts that mean "missing"; a string or an array reference of strings, mapped to `undef`. Off by default | `'na_strings' => 'NA'` |
 | `na_values` | pandas' spelling of `na_strings` | `na_values => ['NA', 'N/A']` |
 | `undef_val` | `write_table`'s spelling of `na_strings`, so a round trip can use one name on both halves | `'undef_val' => 'NA'` |
@@ -6689,8 +6724,8 @@ export writes, is dropped rather than read as part of the first column's name,
 as pandas' `read_csv` drops it.
 
 A delimited file is read as bytes and its fields come back as bytes; nothing is
-decoded. (An `.xlsx` is the exception: its text comes back as characters, see
-*Excel (.xlsx) files* below.) Text you pass in to be compared with a field — a `sep`, a `comment` marker, an
+decoded. (A workbook is the exception: an `.xlsx`'s or `.ods`'s text comes back
+as characters, see *Excel (.xlsx) files* below.) Text you pass in to be compared with a field — a `sep`, a `comment` marker, an
 `na_strings` token, a `filter` key, `row_names` or a `sheet` name — is
 compared as UTF-8 bytes when perl holds it as characters, as it does under
 `use utf8` or for a string you have decoded. So `'na_strings' => '—'` under
@@ -7158,6 +7193,40 @@ as it appears in the file or by its clean name:
 
     read_table('ranks.tabular.tsv', filter => { '# PDB' => sub { $_ == 2 } });
 
+### skipping rows (`skiprows`)
+`skiprows` is pandas' `read_csv` and `read_excel` argument, read the same way.
+It leaves rows out before anything else is read, so the header is the first
+row left, as in pandas:
+
+    my $d = read_table('export.csv',  skiprows => 3);          # the first three rows
+    my $d = read_table('report.xlsx', skiprows => [0, 2]);     # rows 0 and 2
+    my $d = read_table('log.csv',     skiprows => sub { $_[0] % 2 });   # the odd rows
+
+The indices count from 0, and a row is what pandas counts:
+
+  - In a sheet of an `.xlsx` or `.ods`, row `i` is the sheet's row `i + 1`,
+    blank rows included: pandas' `testskiprows` sheet has a blank row 0, the
+    header in row 1 and a blank row 2, and `skiprows => [0, 2]` reads it as a
+    header and four rows.
+  - In a delimited file a row is a record: a quoted field that runs across
+    lines makes one row of all its lines, which are kept or left out together,
+    and a blank line or a comment line is a row of its own. In a row that is
+    left out, a `"` that does not start its field opens no quote, as in
+    pandas. (R's `read.table(skip = n)` counts lines instead; for a file with
+    no quoted line breaks the two are the same.)
+
+A code reference is passed the index and nothing else, and is asked once per
+row, in order, up to the last row of the file, or of the sheet's last row with
+a value. A row it leaves out is not read at all, so it cannot be a ragged row
+or a bad one. A count or an index past the last row is no error, and leaving
+out every row gives an empty table (pandas raises `EmptyDataError`). A row
+that is left out of a sheet does not widen the table, where pandas gives each
+of its cells past the header an "Unnamed" column of `NaN`: a title row above a
+table, which is what `skiprows` is mostly for, is often wider than the table.
+In a workbook read whole, `skiprows` applies to every sheet. Tested against
+pandas' own tests in `t/read_table.skiprows.pandas.t`, and in
+`t/read_table.skiprows.t`.
+
 ### Excel (.xlsx) files
 A file whose name ends in `.xlsx` — or `.xlsm`, `.xltx` or `.xltm`, the
 macro-enabled and template workbooks, which hold their sheets the same way —
@@ -7258,6 +7327,50 @@ apply to `.xlsx` files, so a cell such as `#id` is read as it is. A workbook
 whose elements carry a namespace prefix (`<x:row>`, as the Open XML SDK writes
 them) is read like any other. Tested in `t/read_table.xlsx.t`,
 `t/read_table.xlsx.parser.t` and `t/read_table.xlsx.xml.t`.
+
+### OpenDocument (.ods) files
+A file whose name ends in `.ods`, LibreOffice's and OpenOffice's spreadsheet
+format, or `.ots`, its template, is read as an `.xlsx` is, with no extra
+dependencies and the same options: `sheet` picks a sheet, a workbook of more
+than one sheet with no `sheet` comes back as a hash keyed by sheet name, text
+is characters, blank rows between rows of values are rows of `undef`, and the
+header is the first row with a value:
+
+    my $data = read_table('samples.ods');
+    my $book = read_table('report.ods');                 # { Sheet1 => [...], ... }
+    my $data = read_table('report.ods', sheet => 'Results', skiprows => 1);
+
+A cell reads as pandas' `read_excel(engine="odf")` reads it, by its
+`office:value-type`:
+
+| Type | Read as |
+| ---- | ------- |
+| `float`, `percentage`, `currency` | the number stored, `office:value`: `0.25` for a cell showing `25%` |
+| `date` | the date stored, as its ISO 8601 text: `2015-01-01T00:00:00` |
+| `time` | the text the cell shows, `02:45:56.100`, as pandas reads it: the stored `office:time-value` drops the fraction of a second |
+| `boolean` | `1` or `0`, as an `.xlsx`'s boolean cell reads |
+| `string` | the cell's text |
+| none | the cell's text; pandas reads such a cell as empty |
+
+A cell's text is its paragraphs joined by `"\n"` (pandas joins them with
+nothing), with `<text:s/>`, `<text:tab/>` and `<text:line-break/>` read as the
+spaces, tab and line break they stand for, and the white space of the XML
+itself collapsed as OpenDocument says it is; a comment attached to the cell
+(`<office:annotation>`) is not part of it. A formula whose result is an error
+reads as the error's text, `#N/A`, as in an `.xlsx`; pandas returns `NaN` for
+`#N/A`, which `na_strings => '#N/A'` gives too. A cell type that OpenDocument
+does not define is an error, as in pandas.
+
+A row or cell that the file marks as repeated (`table:number-rows-repeated`,
+`table:number-columns-repeated`) is that many rows or cells, and `skiprows`
+counts each of them. The runs of empty rows and cells that LibreOffice writes
+to the end of every sheet are never built. A cell that a merged cell covers is
+empty, and the merged cell's value is in its first column only. A sheet is read
+to row 16,777,216 and column 16,384, LibreOffice's largest; a value past either
+is an error rather than a table of millions of blank rows. A table nested in a
+cell is part of that cell, not a sheet. Only `content.xml` is read, so styles,
+number formats and formulas other than their results are not. Tested against
+pandas' own tests in `t/read_table.ods.pandas.t`, and in `t/read_table.ods.t`.
 
 ## rename_cols
 
@@ -7469,8 +7582,10 @@ Three differences from R's `sample()` are worth knowing:
   copies it.
 
 The draw is a partial Fisher-Yates shuffle from perl's own PRNG, so
-`srand($seed)` makes it reproducible, and it costs time and memory in
-proportion to `n` rather than to the size of the population.
+`srand($seed)` makes it reproducible. From an array, a draw of fewer than a
+twentieth of the elements costs time and memory in proportion to `n`; a larger
+one, and any draw from a hash, costs them in proportion to the size of the
+population, since every key is collected before the shuffle.
 
 ## scale
 
@@ -8395,14 +8510,14 @@ like an array reference above, returns `{ a => 1, b => 2}`
     );
     my $vc = value_counts(\@records, 'dept');
 
-with a key, the value at that key is counted in each hash, so the above returns `{ Sales => 2, Eng => 1 }`. A record that lacks the key is skipped. Passing an array of hashes without a key, or with an element that is not a hash reference, is a fatal error.
+with a key, the value at that key is counted in each hash, so the above returns `{ Sales => 2, Eng => 1 }`. A record that lacks the key is skipped. A key that no record has dies, naming it (`value_counts: column 'x' not found`), as `dropna` and `drop_duplicates` die on an absent column; an empty frame still gives `{}`. Passing an array of hashes without a key, or with an element that is not a hash reference, is a fatal error.
 
 ### Array of arrays
 
     my @rows = (['a', 1], ['b', 1], ['a', 2]);
     my $vc = value_counts(\@rows, 0);
 
-when the elements are array references, the key is treated as a numeric column index, so the above returns `{ a => 2, b => 1 }`. A non-numeric index against array-reference elements is a fatal error.
+when the elements are array references, the key is treated as a numeric column index, so the above returns `{ a => 2, b => 1 }`. A non-numeric index against array-reference elements is a fatal error. So is an index past the end of every row.
 
 ### Hash
 
