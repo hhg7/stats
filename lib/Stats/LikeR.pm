@@ -852,7 +852,6 @@ sub rownames {
 # `select`/`rename` would shadow them in the caller.  The `_cols` suffix
 # avoids that and reads as a trio.
 
-
 # select_cols($df, @cols) | select_cols($df, \@cols)
 # drop_cols($df,   @cols) | drop_cols($df,   \@cols)
 # rename_cols($df, old => new, ...) | rename_cols($df, { old => new, ... })
@@ -1572,7 +1571,6 @@ sub _untied {
 			\@out_names, [ @by ], [ @agg_cols ]);
 	}
 }
-
 
 # assign($df, name => \&code, name2 => \&code2, ...)
 #
@@ -3036,7 +3034,6 @@ sub _zip_open {
 	}
 	return { file => $file, entries => \%entries };
 }
-
 
 # The same member, read straight out of the archive with Compress::Raw::Zlib
 # instead of through IO::Uncompress::Unzip.
@@ -6430,7 +6427,6 @@ sub age_standardize {
 		per          => $per,
 	};
 }
-
 
 # anova($fit0, $fit1, ..., test => 'Chisq' | 'LRT' | 'F', dispersion => $phi)
 #
