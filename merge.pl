@@ -6,7 +6,7 @@ use feature 'say';
 use warnings FATAL => 'all';
 use autodie ':default';
 use Devel::Confess 'color';
-use Stats::LikeR;
+use Stats::LikeR qw(:all);
 use List::Util 'any';
 
 # ---- pure-Perl reference merge (AoH in, AoH out) ------------------------

@@ -4,7 +4,7 @@ use 5.042.2;
 no source::encoding;
 use warnings FATAL => 'all';
 use autodie ':all';
-use Stats::LikeR;
+use Stats::LikeR qw(:all);
 use DDP {output => 'STDOUT', array_max => 10, show_memsize => 1};
 use Devel::Confess 'color';
 use Time::HiRes;

@@ -6,7 +6,7 @@ use warnings FATAL => 'all';
 use autodie ':default';
 use DDP {output => 'STDOUT', array_max => 10, show_memsize => 1};
 use Devel::Confess 'color';
-use Stats::LikeR;
+use Stats::LikeR qw(:all);
 
 my $t = t_test([1,2,3,4], [3,5,-3,5]);
 p $t;

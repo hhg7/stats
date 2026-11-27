@@ -117,7 +117,7 @@ use List::Util ();
 use POSIX ();
 use Scalar::Util ();
 use Time::HiRes ();
-use Stats::LikeR;
+use Stats::LikeR qw(:all);
 
 # Matplotlib::Simple is loaded by the --plot stage rather than here; see the
 # note beside the require in plot_all().

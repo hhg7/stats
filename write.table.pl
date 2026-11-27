@@ -5,7 +5,7 @@ no source::encoding;
 use warnings FATAL => 'all';
 use autodie ':default';
 use Cn::Util;
-use Stats::LikeR;
+use Stats::LikeR qw(:all);
 
 my %hoa = (
 	'я' => [1..3],

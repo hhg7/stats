@@ -6,7 +6,7 @@ use warnings FATAL => 'all';
 use autodie ':default';
 use DDP {output => 'STDOUT', array_max => 10, show_memsize => 1};
 use Devel::Confess 'color';
-use Stats::LikeR;
+use Stats::LikeR qw(:all);
 
 my @x = qw(2.29258933  0.18126998 -0.35344691 -1.11263431 -1.27008776 -0.25430767
 -0.42543048  0.93866464 -0.20838470  1.23049681  2.00720734 -1.90505316

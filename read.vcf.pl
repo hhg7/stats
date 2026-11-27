@@ -5,7 +5,7 @@ no source::encoding;
 use warnings FATAL => 'all';
 use autodie ':default';
 use Devel::Confess 'color';
-use Stats::LikeR;
+use Stats::LikeR qw(:all);
 
 my $tbl = read_table(
 	'/home/con/Documents/Genomics/56001801066929_WGZ.snp.vcf.gz',

@@ -239,6 +239,47 @@ deletion fits the reports but was not observed locally. Forcing the probe to
 `TRUE` in a 0.3419 build reproduces the Android report, and is how to check
 that a new guard's test really exercises the probe.
 
+### The C library decides how a tie rounds
+
+perl hands `%f`, `%e` and `%g` to the C library, and the libraries round a
+value exactly halfway between two results differently: glibc, UCRT,
+libquadmath and R to the even digit, the MSVCRT under Strawberry Perl 5.24
+away from zero. Only perl's own `%.0f` rounds the same everywhere.
+
+- Never format a number a user sees at a fixed precision with `sprintf`
+  (`'%.1f'`, `'%.*f'`, `'%.4g'`) or `my_snprintf`. Use `_format_nv($style,
+  $prec, $x)` in perl, or `sv_set_nv_even()` in `LikeR.xs`, which round an
+  exact tie to even themselves and leave every other value to the library.
+  `%g` precisions above 13, and ties with more than 17 significant digits,
+  are still the library's.
+- A test that compares formatted numbers includes ties whose even neighbor
+  is below them (0.125 at 2 places, 56.25 at 1), since glibc gets these
+  right and so passes either way. Before trusting the test, run it under an
+  `LD_PRELOAD` shim that rounds ties away from zero.
+
+0.3431's `table_one()` printed 18 of 32 as "18 (56.3%)" on Strawberry 5.24
+and "18 (56.2%)" elsewhere, failing `t/table_one.R.datasets.t` 120. The shim
+reproduced it on Linux, failing that subtest and no other in the suite.
+`summary()` and `write_table(tex_format => 1)` had the same bug, unreported.
+`t/format.ties.R.t` is the regression test.
+
+### A smoker can be 300 times slower
+
+The armv6l-linux smoker is a Raspberry Pi. It runs the suite 48 times slower
+than Strawberry, and an 8001-term `lm()` fit 300 times slower than x86-64.
+
+- A wall-clock bound in a test covers only the code the test is about. Keep
+  out of the timed region any work that grows faster than linearly, or needs
+  hundreds of MB, by nature: a fit, an X'X, a sort of the input.
+- State the bound's headroom against the time measured here, and check that
+  it still holds at 300 times slower.
+
+0.3431 failed `t/formula.parser.R.t` 119 there at 150 s against a 120 s
+bound. The subtest checked that the formula parse is linear, but it timed
+the whole `lm()`, whose X'X and its factor are 8001 x 8001 (760 MB peak,
+0.5 s here). It now times the parse alone, through the "object 'v1' not
+found" path, which takes 5 ms here.
+
 ### Threads change which libc function perl calls
 
 Under `USE_REENTRANT_API`, `reentr.h` maps many libc interfaces (`drand48`,
@@ -278,7 +319,9 @@ show it).
   `((x)==NV_INF)`, missing `-Inf`.
 - Format NVs with `my_snprintf`/`my_sprintf` and `NVgf`/`NVff`, never libc
   `snprintf` with a hand-written `%g`; `%Qg` works in glibc only through a
-  libquadmath extension.
+  libquadmath extension. A number a user sees at a fixed precision goes
+  through `sv_set_nv_even()` instead (see "The C library decides how a tie
+  rounds").
 - Assume no literal is exactly representable; scale tolerances off
   `NV_EPSILON`, never a hardcoded `double` epsilon.
 - Give test tolerances headroom for wider NVs, and consider an

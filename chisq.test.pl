@@ -6,7 +6,7 @@ use warnings FATAL => 'all';
 use autodie ':default';
 use Devel::Confess;
 use DDP {output => 'STDOUT', array_max => 10, show_memsize => 1};
-use Stats::LikeR;
+use Stats::LikeR qw(:all);
 
 my @tab = ([762, 327, 468], [484, 239, 477]);
 my $chisq = chisq_test(\@tab);

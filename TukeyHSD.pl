@@ -6,7 +6,7 @@ use warnings FATAL => 'all';
 use autodie ':default';
 use DDP {output => 'STDOUT', array_max => 10, show_memsize => 1};
 use Devel::Confess 'color';
-use Stats::LikeR;
+use Stats::LikeR qw(:all);
 
 my %pg = (
 	ctrl => [4.17,5.58,5.18,6.11,4.50,4.61,5.17,4.53,5.33,5.14],

@@ -1,6 +1,6 @@
 # Synopsis
 
-    use Stats::LikeR;
+    use Stats::LikeR qw(read_table summary avals mean sd t_test lm);
 
     my $patients = read_table('patients.csv');    # array of hashes, one per row
     summary($patients);                            # R's summary(), one row per column
@@ -29,7 +29,20 @@ List::Util returns `undef`; given a reference to an empty array, as
 `min(\@empty)`, they return `undef`. A `NaN` anywhere in the input makes the
 result `NaN`, as it does in R.
 
-Every function is exported by default.
+# Importing
+
+Nothing is exported by default. Name the functions you want, or ask for all of
+them with `:all`:
+
+    use Stats::LikeR qw(mean sd t_test);   # these three
+    use Stats::LikeR qw(:all);             # every function
+    use Stats::LikeR;                      # none: call Stats::LikeR::mean(...)
+
+Several names (`min`, `max`, `sum`, `mode`, `filter`, `merge`, `sample`,
+`seq`, `uniq`) are also those of functions in List::Util and elsewhere, so
+importing only what you use keeps them from replacing yours. Before 0.35
+every function was exported by default; code that relied on that needs
+`qw(:all)` added to its `use` line.
 
 # Getting help
 
@@ -41,14 +54,18 @@ the spirit of R's `?function` at the prompt. It takes the name three ways:
     h(\&quantile);    # by reference
     h();              # this section, and the list of documented functions
 
-    perl -MStats::LikeR -e 'h(*agg)'   # straight from the shell
+    perl -MStats::LikeR=h -e 'h(*agg)'   # straight from the shell
 
 `h` works for every function in the distribution looking the name up in the module's own POD rather than watching an argument list. That POD is generated from this file, so what `h`
 prints is what you are reading.
 
-Note that `h(bedroc)`, with no quotes and no sigil, cannot be made to work:
-every function here is exported, so Perl parses the bareword as a call to
-`bedroc()` before `h` is ever reached. Use one of the three forms above.
+`h` itself must be imported, or called as `Stats::LikeR::h`; the function asked
+about need not be, since all three forms above work whether or not it was.
+
+Note that `h(bedroc)`, with no quotes and no sigil, cannot be made to work: if
+`bedroc` was imported, Perl parses the bareword as a call to `bedroc()` before
+`h` is ever reached, and if not, `use strict` refuses the bareword. Use one of
+the three forms above.
 
 # Functions/Subroutines
 
@@ -237,7 +254,7 @@ memory.
 
 ### Usage
 
-    use Stats::LikeR;
+    use Stats::LikeR 'agg';
 
     # grouped, one aggregator per column
     my $out = agg($df, by => 'sex', agg => { wt => 'mean' });
@@ -911,7 +928,7 @@ A plain coderef stores its **return value**, so an in-place transform of an exis
 
 `map_cell { ... }` removes the ceremony. Inside the block, **`$_` is the named column's current cell** (not the whole row), the block's return value is **ignored**, and the modified `$_` is stored back -- for a HoA, `$_` aliases the cell itself, so the edit is made where the cell lies:
 
-    use Stats::LikeR;   # exports map_cell alongside assign
+    use Stats::LikeR qw(assign map_cell);
 
     assign($df, 'Res.' => map_cell { s/^[A-Z]:// });   # strip a leading "X:"
     assign($df, 'Res.' => map_cell { $_ = uc });        # upper-case in place
@@ -1283,7 +1300,7 @@ Select **columns** out of a table and return it in the same shape. A column is
 the inner (second-level) key of a **hash of hashes** or an **array of hashes**,
 or the outer key of a **hash of arrays**:
 
-    use Stats::LikeR;
+    use Stats::LikeR 'cfilter';
     my %hoa = ( x => [1,2,3], y => [4,5,6], z => [0,0,0] );
     cfilter(\%hoa, keep   => ['x','y']);  # { x => [1,2,3], y => [4,5,6] }
     cfilter(\%hoa, remove => ['z']);      # { x => [1,2,3], y => [4,5,6] }
@@ -1690,7 +1707,7 @@ It's the workhorse behind things like correlation matrices: give it your data an
 the name of a function that takes two columns (`cor`, `t_test`, …) and you get
 back every column compared against every other column.
 
-    use Stats::LikeR;
+    use Stats::LikeR 'col2col';
     
     my %data = (
         height => [ 170, 165, 180, 175 ],
@@ -1942,7 +1959,7 @@ original frames are never modified.
 
 ### Usage
 
-    use Stats::LikeR;
+    use Stats::LikeR qw(concat rbind);
 
     my $all = concat($df1, $df2, $df3);   # any number of frames
     my $all = rbind($df1, $df2);          # identical: rbind is a synonym
@@ -2033,7 +2050,7 @@ frame round-trips unchanged.
 
 ### rbind
 
-`rbind` is the same subroutine as `concat`, exported under a second name for
+`rbind` is the same subroutine as `concat`, exportable under a second name for
 readers who know it from R:
 
     my $c = rbind($df1, $df2);
@@ -3464,7 +3481,7 @@ Return a new data frame containing only the rows of `$df` that match a predicate
 1. a **`col()` expression** — a small, composable comparison built with overloaded operators, and
 2. a **code reference** — for anything the operators can't express (multiple columns, regexes, matching on the row name, arbitrary logic), in the same spirit as the `filter` option of [`read_table`](#).
 
-Both `filter` and `col` are exported by default.
+Import both: `use Stats::LikeR qw(filter col);`.
 
 ### Arguments
 
@@ -3553,7 +3570,7 @@ The two selectable output types are `'aoh'` and `'hoa'`. `'hoh'` is **not** sele
 
 ### Examples
 
-    use Stats::LikeR;
+    use Stats::LikeR qw(read_table filter col);
     my $df = read_table('patients.csv');                 # array of hashes
 
     my $adults = filter($df, col('Age') >= 18);          # numeric threshold
@@ -4111,7 +4128,7 @@ ask for a name, get the section of the manual that describes it.
     h(\&quantile);    # by reference
     h();              # the general help, and every documented function
 
-    perl -MStats::LikeR -e 'h(*write_table)'   # straight from the shell
+    perl -MStats::LikeR=h -e 'h(*write_table)'   # straight from the shell
 
 ### Arguments
 
@@ -4119,12 +4136,12 @@ ask for a name, get the section of the manual that describes it.
 | --- | --- |
 | `h('name')` | A string. A package prefix is ignored, so `h('Stats::LikeR::agg')` works too. |
 | `h(*name)` | A typeglob. The closest thing to an unquoted name that Perl will allow here. |
-| `h(\&name)` | A code reference to one of this module's functions. Dies if the reference is not one. |
+| `h(\&name)` | A code reference to one of this module's functions, imported or not. Dies if the reference is to some other defined function. |
 | `h()` | No argument: prints [Getting help](#getting-help) and lists every documented function. |
 
-`h(bedroc)`, with no quotes and no sigil, cannot be made to work: every function
-here is exported, so Perl parses the bareword as a call to `bedroc()` before `h`
-is ever reached.
+`h(bedroc)`, with no quotes and no sigil, cannot be made to work: if `bedroc`
+was imported, Perl parses the bareword as a call to `bedroc()` before `h` is
+ever reached, and if not, `use strict` refuses the bareword.
 
 ### Return value
 
@@ -4299,7 +4316,7 @@ Convert a **hash of hashes** (row-major: outer key = row, inner key = column)
 into a **hash of arrays** (column-major: key = column, value = that column's
 cells down the rows).
 
-    use Stats::LikeR;
+    use Stats::LikeR 'hoh2hoa';
 
     my %hoh = (
         'r1' => { 'a' => 1, 'b' => 2 },
@@ -4627,7 +4644,7 @@ positive integer; or an invalid `limit_direction`/`limit_area`.
 Returns the set intersection (∩) of a list of array references: the values
 that appear in **every** array ref given.
 
-	use Stats::LikeR;
+	use Stats::LikeR 'intersection';
 
 	my @i = intersection([1, 2, 3], [2, 3, 4]);          # (2, 3)
 	my @t = intersection([1, 2, 3, 4], [2, 3, 4], [3, 4]); # (3, 4)
@@ -8385,7 +8402,7 @@ Dies if any inner element is not a hash reference
 
 Returns the distinct values of its arguments, in first-seen order.
 
-	use Stats::LikeR;
+	use Stats::LikeR 'uniq';
 
 	my @u = uniq(1, 2, 2, 3, 1);         # (1, 2, 3)
 	my @s = uniq(qw/a b a c/);           # ('a', 'b', 'c')
@@ -8582,7 +8599,7 @@ equal values whose sum overflows still have a variance of `0`
 
 As described by R: Performs an F test to compare the variances of two samples from normal populations
 
-    use Stats::LikeR;
+    use Stats::LikeR 'var_test';
 
     my @x = (2.9, 3.0, 2.5, 2.6, 3.2);
     my @y = (3.8, 2.7, 4.0, 2.4);

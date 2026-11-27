@@ -30,7 +30,7 @@
 #     column too.
 use strict;
 use warnings;
-use Stats::LikeR;
+use Stats::LikeR qw(:all);
 use Time::HiRes ();
 use POSIX ();
 

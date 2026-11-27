@@ -2,7 +2,7 @@
 use 5.042.2;
 no source::encoding;
 use warnings;
-use Stats::LikeR;
+use Stats::LikeR qw(:all);
 use DDP;
 # ══════════════════════════════════════════════════════════════════════════
 # MODE 1 – hash of groups (original behaviour)

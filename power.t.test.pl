@@ -6,7 +6,7 @@ use warnings FATAL => 'all';
 use autodie ':default';
 use DDP {output => 'STDOUT', array_max => 10, show_memsize => 1};
 use Devel::Confess 'color';
-use Stats::LikeR;
+use Stats::LikeR qw(:all);
 
 h(*power_t_test);
 my $power = power_t_test(
