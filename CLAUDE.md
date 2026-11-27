@@ -256,6 +256,13 @@ away from zero. Only perl's own `%.0f` rounds the same everywhere.
   is below them (0.125 at 2 places, 56.25 at 1), since glibc gets these
   right and so passes either way. Before trusting the test, run it under an
   `LD_PRELOAD` shim that rounds ties away from zero.
+- The MSVCRT also writes every `%e`/`%g` exponent with at least three
+  digits (`1e+004`). Any number a user sees in exponent form goes through
+  `exp_two_digits()`, which `sv_set_nv_even()` and `_format_nv()` already
+  apply. 0.35 failed 33 subtests of `t/format.ties.R.t` on Strawberry 5.24
+  this way. A shim that inserts a 0 into a two-digit exponent reproduces
+  it; its unbounded `sprintf` forms must forward to the real `vsprintf`,
+  not to `vsnprintf` with a huge size, or glibc corrupts perl's output.
 
 0.3431's `table_one()` printed 18 of 32 as "18 (56.3%)" on Strawberry 5.24
 and "18 (56.2%)" elsewhere, failing `t/table_one.R.datasets.t` 120. The shim
