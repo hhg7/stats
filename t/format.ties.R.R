@@ -50,6 +50,12 @@ for (p in c(7, 5, 4)) row("g", p, 12345.6789)
 for (x in c(56.25, 43.75, 0.125, 2.375, 123456789012345.25, 2.675, 0.15))
 	for (p in 1:3) row("f", p, x)
 
+# Exponent widths, none a tie.  0.35 under the MSVCRT (Strawberry Perl 5.24)
+# printed "1.234e+004" for R's "1.234e+04"; a two-digit exponent either side of
+# zero, and a three-digit one, which must stay three.
+for (x in c(1e5, -1e5, 2^-30, 2^400, -2^400, 2^-900))
+	for (p in c(1, 4, 15)) row("g", p, x)
+
 # table_one(): mean of c(2, 2.25) is 2.125, and 18 of 32 is 56.25%.
 cat("# table_one\n")
 cat(sprintf("# mean %s sd %s pct %s\n", sprintf("%.2f", mean(c(2, 2.25))),

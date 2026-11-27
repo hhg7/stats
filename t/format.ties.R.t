@@ -14,6 +14,17 @@
 # ulp away from zero before formatting; 0.3431 under it fails this file and
 # t/table_one.R.datasets.t 120, and nothing else.
 #
+# The same MSVCRT prints every exponent with at least three digits, so 0.35
+# failed 33 subtests here (the %g rows, summary() and write_table()) with
+# "1.234e+004" for "1.234e+04"; sv_set_nv_even() now trims it to two, as
+# C99, glibc, UCRT and R print it.  The rows from 1e+05 on add exponents
+# that are not ties, including three-digit ones, which must stay three.  An
+# LD_PRELOAD shim whose vsnprintf, vsprintf, snprintf, sprintf and their
+# _chk forms insert a 0 into a two-digit exponent, for a format that is one
+# %e or %g conversion, makes 0.35 fail exactly those 33 subtests and nothing
+# else in the suite.  An unbounded sprintf must go to the real vsprintf, not
+# to vsnprintf with a huge size, or glibc truncates perl's stringification.
+#
 # Provenance: every expected string is R 4.6.2's sprintf() on glibc (Linux),
 # printed by t/format.ties.R.R; run `Rscript t/format.ties.R.R` to reproduce
 # @R.  The inputs follow R's own documentation and tests:
@@ -25,6 +36,8 @@
 #   - R 4.6.1 tests/reg-tests-3.R, sprintf("%.7g"/"%.5g"/"%.4g", 12345.6789);
 #   - the 56.25% of the failing report, and summary()'s statistics of
 #     c(1.0625, 2, 12345) as R's quantile() and mean() give them.
+#   - for exponent widths, 1e5, 2^-30, 2^400 and 2^-900, chosen here (no R
+#     test pins %g exponents), at 1, 4 and 15 significant digits.
 # Each input is written n / 2**s, exact on every perl (see the generator).
 #
 # Tolerance: none; strings are compared exactly.
@@ -182,6 +195,24 @@ my @R = (
 	['f', 1, 5404319552844595, 55, '0.1'], # 0.14999999999999999
 	['f', 2, 5404319552844595, 55, '0.15'], # 0.14999999999999999
 	['f', 3, 5404319552844595, 55, '0.150'], # 0.14999999999999999
+	['g', 1, 3125, -5, '1e+05'], # 100000
+	['g', 4, 3125, -5, '1e+05'], # 100000
+	['g', 15, 3125, -5, '100000'], # 100000
+	['g', 1, -3125, -5, '-1e+05'], # -100000
+	['g', 4, -3125, -5, '-1e+05'], # -100000
+	['g', 15, -3125, -5, '-100000'], # -100000
+	['g', 1, 1, 30, '9e-10'], # 9.3132257461547852e-10
+	['g', 4, 1, 30, '9.313e-10'], # 9.3132257461547852e-10
+	['g', 15, 1, 30, '9.31322574615479e-10'], # 9.3132257461547852e-10
+	['g', 1, 1, -400, '3e+120'], # 2.5822498780869086e+120
+	['g', 4, 1, -400, '2.582e+120'], # 2.5822498780869086e+120
+	['g', 15, 1, -400, '2.58224987808691e+120'], # 2.5822498780869086e+120
+	['g', 1, -1, -400, '-3e+120'], # -2.5822498780869086e+120
+	['g', 4, -1, -400, '-2.582e+120'], # -2.5822498780869086e+120
+	['g', 15, -1, -400, '-2.58224987808691e+120'], # -2.5822498780869086e+120
+	['g', 1, 1, 900, '1e-271'], # 1.1830521861667747e-271
+	['g', 4, 1, 900, '1.183e-271'], # 1.1830521861667747e-271
+	['g', 15, 1, 900, '1.18305218616677e-271'], # 1.1830521861667747e-271
 );
 for my $c (@R) {
 	my ($style, $prec, $n, $s, $want) = @$c;

@@ -1,5 +1,31 @@
 Revision history for Stats-LikeR
 
+0.3501 2026-11-27 CST
+
+ [Bug fixes]
+
+ - summary() and write_table(tex_format => 1) printed a %.4g number with
+   the exponent as the C library writes it, and the MSVCRT behind
+   Strawberry Perl 5.24 writes at least three digits where C99, glibc,
+   UCRT and R write two: 12345 came out as "1.234e+004" there and
+   "1.234e+04" elsewhere. 0.35 failed 33 subtests of t/format.ties.R.t
+   (78, 81-105, 109-111, 117, 122, 162-163) on perl 5.24.4
+   MSWin32-x64-multi-thread, every one over the exponent; the ties those
+   subtests are about were already rounded right. The module was at
+   fault, not the test: one table read differently on two platforms. The
+   XS now trims such an exponent to two digits, as quantile() and hist()
+   labels already did, and leaves one that needs three ("2.582e+120")
+   alone. An LD_PRELOAD shim that makes glibc print three-digit exponents
+   reproduced the report on Linux, failing those 33 subtests and no other
+   in the whole suite; with the fix the suite passes under it.
+
+ [Tests]
+
+ - t/format.ties.R.t gains 18 %g rows that are not ties: 1e5, 2^-30,
+   2^400 and 2^-900 at 1, 4 and 15 significant digits, so two- and
+   three-digit exponents of both signs, from R 4.6.2's sprintf() by
+   t/format.ties.R.R. 0.35 under the shim fails 7 of them.
+
 0.35 2026-11-27 CST
 
  [Incompatible changes]

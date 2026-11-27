@@ -468,9 +468,20 @@ static void usage_croak(pTHX_ const char *restrict fn, const char *restrict pat,
 	sv_2mortal(help); // only now: made mortal inside SAVETMPS, FREETMPS would have freed it too
 	croak("%" SVf "%s: error: %" SVf "\n", SVfARG(help), fn, SVfARG(msg));
 }
+/*An exponent printed with three digits where two would do ("1e-008", as the
+MSVCRT under Strawberry Perl 5.24 prints it) comes back to the two that C99,
+R, glibc and UCRT print.  The string is shortened in place.*/
+static void exp_two_digits(char *restrict s) {
+	char *restrict e = strchr(s, 'e');
+	if (!e || (e[1] != '+' && e[1] != '-')) return;
+	char *restrict d = e + 2;
+	size_t nd = strlen(d);
+	while (nd > 2 && d[0] == '0') { memmove(d, d + 1, nd); nd--; }
+}
 /*Set out to perl's sprintf("%.*f", prec, x) (style 'f') or "%.*g" (style
 'g'), except that a value exactly halfway between two results rounds to the
-even one on every platform.
+even one on every platform.  Call sv_set_nv_even() below, which also fixes the
+exponent's width.
 
 perl hands %f, %e and %g to the C library, and the libraries disagree on ties:
 glibc, UCRT and libquadmath round the exact binary value half to even, the
@@ -492,7 +503,7 @@ every NV width and needs no NVgf length modifier for -Wformat to misread.
 out is not restrict: it and prec are perl-managed SVs.*/
 #define NV_EVEN_SIG_MAX 17 // MSVCRT prints a double exactly to 17 significant digits and no further, so a longer tie keeps the library's rounding
 #define NV_EVEN_G_MAX 13 // a %g tie is re-read through perl's Atof(), not correctly rounded on old perls; 13 digits keeps 2 orders of a double's 15 spare (chosen, not measured)
-static void sv_set_nv_even(pTHX_ SV *out, const char style, SV *prec, const NV x)
+static void sv_set_nv_even_tie(pTHX_ SV *out, const char style, SV *prec, const NV x)
 {
 	SV *args[2];
 	args[0] = prec;
@@ -589,6 +600,21 @@ static void sv_set_nv_even(pTHX_ SV *out, const char style, SV *prec, const NV x
 	args[0] = prec;
 	args[1] = sv_2mortal(newSVnv(Atof(SvPV_nolen(tmp))));
 	sv_vsetpvfn(out, pat, 4, NULL, args, 2, NULL);
+}
+/*sv_set_nv_even_tie(), with a %g exponent cut to two digits where it fits.
+
+The MSVCRT under Strawberry Perl 5.24 prints an exponent with at least three,
+so 0.35's summary() and write_table(tex_format => 1) showed 12345 as
+"1.234e+004" there and "1.234e+04" everywhere else (t/format.ties.R.t 78,
+81-105, 109-111, 117, 122, 162-163).  Style 'f' prints no exponent.  out is
+not restrict: it and prec are perl-managed SVs.*/
+static void sv_set_nv_even(pTHX_ SV *out, const char style, SV *prec, const NV x)
+{
+	sv_set_nv_even_tie(aTHX_ out, style, prec, x);
+	if (style != 'g') return;
+	char *s = SvPV_force_nolen(out); // not restrict: perl-managed memory; forcing also unshares a COW buffer
+	exp_two_digits(s);
+	SvCUR_set(out, strlen(s));
 }
 /*Compare a NUL-terminated string against a lowercase ASCII literal, ignoring
 case. strcasecmp() would do this, but it is declared in <strings.h>, which is
@@ -7197,16 +7223,6 @@ static double qn_pct(NV p) {
 	return x;
 }
 
-/*An exponent printed with three digits where two would do ("1e-008", as older
-Microsoft C libraries print it) comes back to R's two.*/
-static void qn_fix_exponent(char *restrict s) {
-	char *restrict e = strchr(s, 'e');
-	if (!e || (e[1] != '+' && e[1] != '-')) return;
-	char *restrict d = e + 2;
-	size_t nd = strlen(d);
-	while (nd > 2 && d[0] == '0') { memmove(d, d + 1, nd); nd--; }
-}
-
 /*formatC(x, format = "fg", width = 1, digits = 7) for one finite x >= 0: R's
 str_signif() (src/main/util.c), "fg" branch.  R first rounds x / 10^iex to six
 decimals to see whether it carries into the next power of ten, but that only
@@ -7283,7 +7299,7 @@ static void qn_format_vec(const double *restrict x, const bool *restrict ok,
 		if (!sci)        snprintf(out[i], len, "%.*f", d, x[i]);
 		else if (d > 0)  snprintf(out[i], len, "%#.*e", d, x[i]);
 		else             snprintf(out[i], len, "%.*e", d, x[i]);
-		qn_fix_exponent(out[i]);
+		exp_two_digits(out[i]);
 	}
 }
 /*R's pretty() over a range: the breakpoints hist() bins into.
@@ -8672,8 +8688,8 @@ says.  When the source SV is UTF-8, Greek letters are turned into their
 textgreek macros (e.g. U+0394 Greek Delta -> \textDelta{}; the trailing {}
 keeps a following letter from being swallowed into the control word). With
 do_format set, a numeric cell is first rendered with %.4g (mirrors the
-original 'format' option), a tie rounded to even everywhere by
-sv_set_nv_even().  The cell is len bytes and may hold a NUL, which passes
+original 'format' option), a tie rounded to even and the exponent given two
+digits everywhere by sv_set_nv_even().  The cell is len bytes and may hold a NUL, which passes
 through like any other byte; what is kept is copied a run at a time.*/
 static void tex_escape_sv(pTHX_ SV *out, const char *s, STRLEN len, bool is_utf8, bool do_format){
 	sv_setpvs(out, "");
@@ -33312,8 +33328,9 @@ _melt_xs(df, shape, id, val, otype, var_name, value_name)
 	RETVAL
 
  # sprintf("%.*f", $prec, $x) for style 'f', "%.*g" for 'g', with an exact
- # tie rounded to even on every platform; see sv_set_nv_even().  For
- # table_one() and summary(), whose cells are strings people compare.
+ # tie rounded to even and a %g exponent of two digits ("1e+04", not MSVCRT's
+ # "1e+004") on every platform; see sv_set_nv_even().  For table_one() and
+ # summary(), whose cells are strings people compare.
 SV *
 _format_nv(style, prec, x)
 	const char *style
